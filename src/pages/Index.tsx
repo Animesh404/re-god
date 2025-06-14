@@ -14,7 +14,7 @@ const Index = () => {
       <div className="relative z-10 flex min-h-screen flex-col items-center justify-center space-y-6 px-4 text-center text-neutral-100">
         <BookOpen className="h-16 w-16" />
         <h1 className="text-5xl font-bold tracking-tight md:text-6xl">
-          Faith Future Foundations
+          RE: GOD
         </h1>
         <h2 className="text-3xl font-light text-neutral-200 md:text-4xl">
           Coming Soon
