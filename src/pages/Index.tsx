@@ -20,7 +20,7 @@ const Index = () => {
           Coming Soon
         </h2>
         <p className="max-w-2xl text-lg text-orange-100 md:text-xl drop-shadow-lg">
-          Our new website is under construction. We're working hard to bring you insightful courses to deepen your understanding of the Bible.
+          Regarding God An audio-visual exploration of the character of God based on His interactions with people recorded in the Bible and shared in more recent times
         </p>
         
         <div className="flex flex-col sm:flex-row items-center gap-4 pt-6">
