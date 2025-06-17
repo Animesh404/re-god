@@ -16,10 +16,6 @@ const Index = () => {
           alt="RE:GOD Logo" 
           className="w-80 h-auto mb-4 drop-shadow-2xl"
         />
-        <BookOpen className="h-16 w-16 text-yellow-300 drop-shadow-lg" />
-        <h1 className="text-5xl font-bold tracking-tight md:text-6xl drop-shadow-2xl">
-          RE: GOD
-        </h1>
         <h2 className="text-3xl font-light text-yellow-100 md:text-4xl drop-shadow-lg">
           Coming Soon
         </h2>
