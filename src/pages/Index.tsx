@@ -19,7 +19,7 @@ const Index = () => {
         <h2 className="text-3xl font-light text-yellow-100 md:text-4xl drop-shadow-lg">
           Coming Soon
         </h2>
-        <p className="max-w-2xl text-lg text-orange-100 md:text-xl drop-shadow-lg">
+        <p className="max-w-3xl text-lg text-orange-100 md:text-xl drop-shadow-lg">
           Regarding God An audio-visual exploration of the character of God based on His interactions with people recorded in the Bible and shared in more recent times
         </p>
         
