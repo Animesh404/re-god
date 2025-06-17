@@ -1,5 +1,5 @@
 
-import { BookOpen } from "lucide-react";
+import { Apple, Play } from "lucide-react";
 
 const Index = () => {
   return (
@@ -22,6 +22,17 @@ const Index = () => {
         <p className="max-w-2xl text-lg text-orange-100 md:text-xl drop-shadow-lg">
           Our new website is under construction. We're working hard to bring you insightful courses to deepen your understanding of the Bible.
         </p>
+        
+        <div className="flex items-center space-x-8 pt-4">
+          <div className="flex flex-col items-center space-y-2">
+            <Apple className="h-12 w-12 text-white drop-shadow-lg" />
+            <span className="text-sm text-yellow-100 drop-shadow-lg">App Store</span>
+          </div>
+          <div className="flex flex-col items-center space-y-2">
+            <Play className="h-12 w-12 text-white drop-shadow-lg" />
+            <span className="text-sm text-yellow-100 drop-shadow-lg">Google Play</span>
+          </div>
+        </div>
       </div>
     </div>
   );
