@@ -23,14 +23,21 @@ const Index = () => {
           Our new website is under construction. We're working hard to bring you insightful courses to deepen your understanding of the Bible.
         </p>
         
-        <div className="flex items-center space-x-8 pt-4">
-          <div className="flex flex-col items-center space-y-2">
-            <Apple className="h-12 w-12 text-white drop-shadow-lg" />
-            <span className="text-sm text-yellow-100 drop-shadow-lg">App Store</span>
+        <div className="flex flex-col sm:flex-row items-center gap-4 pt-6">
+          <div className="bg-black/80 backdrop-blur-sm border border-gray-600 rounded-xl px-6 py-3 flex items-center space-x-3 hover:bg-black/90 transition-colors cursor-pointer min-w-[200px]">
+            <Apple className="h-8 w-8 text-white" />
+            <div className="text-left">
+              <div className="text-xs text-gray-300">Download on the</div>
+              <div className="text-lg font-semibold text-white">App Store</div>
+            </div>
           </div>
-          <div className="flex flex-col items-center space-y-2">
-            <Play className="h-12 w-12 text-white drop-shadow-lg" />
-            <span className="text-sm text-yellow-100 drop-shadow-lg">Google Play</span>
+          
+          <div className="bg-black/80 backdrop-blur-sm border border-gray-600 rounded-xl px-6 py-3 flex items-center space-x-3 hover:bg-black/90 transition-colors cursor-pointer min-w-[200px]">
+            <Play className="h-8 w-8 text-white" />
+            <div className="text-left">
+              <div className="text-xs text-gray-300">GET IT ON</div>
+              <div className="text-lg font-semibold text-white">Google Play</div>
+            </div>
           </div>
         </div>
       </div>
