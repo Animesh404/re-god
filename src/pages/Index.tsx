@@ -11,6 +11,11 @@ const Index = () => {
     >
       <div className="absolute inset-0 bg-black/40" />
       <div className="relative z-10 flex min-h-screen flex-col items-center justify-center space-y-6 px-4 text-center text-white">
+        <img 
+          src="/lovable-uploads/28360bbd-5963-4c42-9bd1-693b4c9cff3f.png" 
+          alt="RE:GOD Logo" 
+          className="w-80 h-auto mb-4 drop-shadow-2xl"
+        />
         <BookOpen className="h-16 w-16 text-yellow-300 drop-shadow-lg" />
         <h1 className="text-5xl font-bold tracking-tight md:text-6xl drop-shadow-2xl">
           RE: GOD
