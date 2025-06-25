@@ -1,5 +1,5 @@
 
-import { Apple, Play } from "lucide-react";
+import { Apple, Play, Heart } from "lucide-react";
 
 const Index = () => {
   return (
@@ -44,6 +44,13 @@ const Index = () => {
               <div className="text-lg font-semibold text-white">Google Play</div>
             </div>
           </div>
+        </div>
+
+        <div className="pt-4">
+          <button className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-semibold px-8 py-3 rounded-xl flex items-center space-x-3 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105">
+            <Heart className="h-6 w-6" />
+            <span className="text-lg">Support This Project</span>
+          </button>
         </div>
       </div>
     </div>
