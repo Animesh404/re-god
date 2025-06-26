@@ -1,7 +1,13 @@
-
 import { Apple, Play, Heart } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 const Index = () => {
+  const navigate = useNavigate();
+
+  const handleDonateClick = () => {
+    navigate("/donate");
+  };
+
   return (
     <div
       className="relative min-h-screen w-full bg-cover bg-center"
@@ -9,6 +15,7 @@ const Index = () => {
         backgroundImage: "url('/lovable-uploads/1174d5e1-9ba9-4d08-9b4a-255cb5f8cd4a.png')",
       }}
     >
+      
       <div className="absolute inset-0 bg-black/40" />
       <div className="relative z-10 flex min-h-screen flex-col items-center justify-center space-y-6 px-4 text-center text-white">
         <img 
@@ -27,6 +34,7 @@ const Index = () => {
         <p className="max-w-3xl text-lg text-orange-100 md:text-xl drop-shadow-lg">
           Regarding God an audio-visual exploration of the character of God based on his interactions with people recorded in the Bible and shared in more recent times
         </p>
+        
         
         <div className="flex flex-col sm:flex-row items-center gap-4 pt-6">
           <div className="bg-black/80 backdrop-blur-sm border border-gray-600 rounded-xl px-6 py-3 flex items-center space-x-3 hover:bg-black/90 transition-colors cursor-pointer min-w-[200px]">
@@ -47,7 +55,10 @@ const Index = () => {
         </div>
 
         <div className="pt-4">
-          <button className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-semibold px-8 py-3 rounded-xl flex items-center space-x-3 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105">
+          <button 
+            onClick={handleDonateClick}
+            className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-semibold px-8 py-3 rounded-xl flex items-center space-x-3 transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
+          >
             <Heart className="h-6 w-6" />
             <span className="text-lg">Support This Project</span>
           </button>
