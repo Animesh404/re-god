@@ -1,0 +1,23 @@
+import { MapPin } from "lucide-react"
+import { Card, CardContent } from "@/components/ui/card"
+
+export function AdminProfile() {
+  return (
+    <Card className="bg-white">
+      <CardContent className="p-6">
+        <div className="flex items-center space-x-4">
+          <div className="w-16 h-16 bg-gray-300 rounded-full overflow-hidden">
+            <img src="/placeholder.svg?height=64&width=64" alt="Admin User" className="w-full h-full object-cover" />
+          </div>
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Admin User</h2>
+            <div className="flex items-center text-gray-600 mt-1">
+              <MapPin className="w-4 h-4 mr-1" />
+              <span>Main Church</span>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
