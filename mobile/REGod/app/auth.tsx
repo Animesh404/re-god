@@ -13,12 +13,14 @@ import {
   Image,
   Animated,
   Easing,
+  Alert,
 } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { setAudioModeAsync } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { useAuth } from './contexts/AuthContext';
 import Logo from '../assets/images/logo.png';
 import GoogleLogo from '../components/GoogleLogo';
 
@@ -30,12 +32,17 @@ export default function AuthScreen() {
   const [teacherCode, setTeacherCode] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [stage, setStage] = useState<AuthStage>('splash');
-  const fadeAnim = useRef(new Animated.Value(1)).current; // 1 = black overlay visible
+  const [isLoading, setIsLoading] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
   const [hasFaded, setHasFaded] = useState(false);
 
+  const { login, register, error, clearError, isAuthenticated } = useAuth();
+
+  // Your existing video player setup code remains the same
   const player = useVideoPlayer(require('@/assets/videos/Re-God video h264.mov'), (player) => {
     player.loop = true;
     player.muted = false;
@@ -43,10 +50,10 @@ export default function AuthScreen() {
   });
 
   useEffect(() => {
+    // Your existing video setup code remains the same
     let timer: any;
     if (player) {
       const statusListener = player.addListener('statusChange', (status) => {
-        // Heuristic: fade once any status event arrives after play() call
         if (!hasFaded) {
           setHasFaded(true);
           Animated.timing(fadeAnim, {
@@ -67,15 +74,12 @@ export default function AuthScreen() {
         shouldRouteThroughEarpiece: false,
       }).catch(() => {});
 
-      // Try to play after a delay
       timer = setTimeout(() => {
         try {
           player.play();
-          console.log('Attempting to play video');
         } catch (error) {
           console.log('Error playing video:', error);
         }
-        // Safety: fade after short delay in case status event misses
         if (!hasFaded) {
           setTimeout(() => {
             if (!hasFaded) {
@@ -98,6 +102,18 @@ export default function AuthScreen() {
     }
   }, [player]);
 
+  // Redirect if authenticated
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace('/(tabs)/course');
+    }
+  }, [isAuthenticated]);
+
+  // Clear error when stage changes
+  useEffect(() => {
+    clearError();
+  }, [stage]);
+
   // Splash -> Login transition
   useEffect(() => {
     if (stage === 'splash') {
@@ -106,35 +122,63 @@ export default function AuthScreen() {
     }
   }, [stage]);
 
-  const handleSocialLogin = (provider: string) => {
-    console.log(`Login with ${provider}`);
-    // Implement social login logic here
+  const handleSocialLogin = async (provider: string) => {
+    Alert.alert('Social Login', `${provider} login will be implemented soon`);
+    // TODO: Implement social login with your backend
   };
 
-  const handleCreateAccount = () => {
-    console.log('Create account');
-    // Navigate to main app for now
-    router.replace('/(tabs)/course');
+  const handleCreateAccount = async () => {
+    if (!name.trim()) {
+      Alert.alert('Error', 'Please enter your name');
+      return;
+    }
+    
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Error', 'Please enter email and password');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      await register(email.trim(), password, name.trim(), teacherCode.trim() || undefined);
+      // Navigation will happen automatically via useEffect when isAuthenticated becomes true
+    } catch (err) {
+      Alert.alert('Registration Failed', error || 'Something went wrong');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleSignIn = () => {
-    console.log('Sign in');
-    router.replace('/(tabs)/course');
+  const handleSignIn = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Error', 'Please enter email and password');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      await login(email.trim(), password);
+      // Navigation will happen automatically via useEffect when isAuthenticated becomes true
+    } catch (err) {
+      Alert.alert('Login Failed', error || 'Invalid email or password');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleForgotPassword = () => {
-    console.log('Forgot password');
-    // Implement forgot password logic here
+    Alert.alert('Forgot Password', 'Password reset will be implemented soon');
+    // TODO: Implement forgot password
   };
 
+  // Your existing render logic remains mostly the same, just update the buttons:
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
-      {/* Initial Black Background */}
+      {/* Your existing video and overlay setup remains the same */}
       <View style={styles.fallbackBackground} />
       
-      {/* Fullscreen Video Background */}
       <VideoView
         player={player}
         style={styles.videoBackground}
@@ -145,9 +189,7 @@ export default function AuthScreen() {
         showsTimecodes={false}
       />
       
-      {/* Persistent dark overlay for readability */}
       <View style={styles.overlay} />
-      {/* Fade-from-black overlay to smooth the transition */}
       <Animated.View style={[styles.fadeOverlay, { opacity: fadeAnim }]} />
       
       <SafeAreaView style={styles.safeArea}>
@@ -160,12 +202,14 @@ export default function AuthScreen() {
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
+            {/* Your existing splash screen remains the same */}
             {stage === 'splash' && (
               <View style={[styles.splashContainer, { paddingTop: Math.round(height * 0.18) }]}>
                 <Image source={Logo} style={styles.logoSplash} />
               </View>
             )}
 
+            {/* Updated login screen */}
             {stage === 'login' && (
               <>
                 <View style={styles.logoContainer}>
@@ -220,8 +264,14 @@ export default function AuthScreen() {
                       <Text style={styles.forgotPasswordText}>Forgot password</Text>
                     </TouchableOpacity>
                   </View>
-                  <TouchableOpacity style={styles.primaryButton} onPress={handleSignIn}>
-                    <Text style={styles.primaryButtonText}>Sign in</Text>
+                  <TouchableOpacity 
+                    style={[styles.primaryButton, isLoading && { opacity: 0.7 }]} 
+                    onPress={handleSignIn}
+                    disabled={isLoading}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {isLoading ? 'Signing in...' : 'Sign in'}
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => setStage('onboarding1')}>
                     <Text style={styles.linkButtonText}>Create account</Text>
@@ -234,11 +284,9 @@ export default function AuthScreen() {
               </>
             )}
 
+            {/* Your existing onboarding screens remain the same */}
             {(stage === 'onboarding1' || stage === 'onboarding2' || stage === 'onboarding3') && (
               <View style={[styles.formContainer, { justifyContent: 'center', flex: 1 }]}>
-                {/* <View style={[styles.logoContainer, { marginTop: 24, marginBottom: 16 }]}>
-                  <Image source={Logo} style={styles.logoSmall} />
-                </View> */}
                 <View>
                   <Text style={styles.headline}>
                     {stage === 'onboarding1' ? 'Interesting &\nInexhaustible' : stage === 'onboarding2' ? 'Deep & Diverse' : 'Purposeful &\nPersonalized'}
@@ -264,20 +312,31 @@ export default function AuthScreen() {
               </View>
             )}
 
+            {/* Updated signup screen */}
             {stage === 'signup' && (
               <View style={styles.formContainer}>
-                {/* Logo */}
                 <View style={[styles.logoContainer, { marginTop: 18, marginBottom: 12 }]}>
                   <Image source={Logo} style={styles.logo}  />
                 </View>
 
-                {/* Form Container */}
                 <View style={styles.formContainer}>
-                  {/* Teacher's Code Input */}
+                  {/* Add name input */}
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
-                      placeholder="Teacher's Code"
+                      placeholder="Full Name"
+                      placeholderTextColor="rgba(128, 128, 128, 0.7)"
+                      value={name}
+                      onChangeText={setName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                    />
+                  </View>
+
+                  <View style={styles.inputContainer}>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Teacher's Code (Optional)"
                       placeholderTextColor="rgba(128, 128, 128, 0.7)"
                       value={teacherCode}
                       onChangeText={setTeacherCode}
@@ -286,7 +345,6 @@ export default function AuthScreen() {
                     />
                   </View>
 
-                  {/* Email Input */}
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
@@ -300,7 +358,6 @@ export default function AuthScreen() {
                     />
                   </View>
 
-                  {/* Password Input */}
                   <View style={styles.inputContainer}>
                     <TextInput
                       style={styles.input}
@@ -324,7 +381,6 @@ export default function AuthScreen() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Remember Me and Forgot Password */}
                   <View style={styles.rememberForgotContainer}>
                     <TouchableOpacity
                       style={styles.rememberMeContainer}
@@ -341,9 +397,7 @@ export default function AuthScreen() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Social Login Buttons */}
                   <View style={styles.socialButtonsContainer}>
-                    {/* Google */}
                     <TouchableOpacity
                       style={styles.socialButton}
                       onPress={() => handleSocialLogin('Google')}
@@ -352,7 +406,6 @@ export default function AuthScreen() {
                       <Text style={styles.socialButtonText}>Sign in with Google</Text>
                     </TouchableOpacity>
 
-                    {/* Apple */}
                     <TouchableOpacity
                       style={styles.socialButton}
                       onPress={() => handleSocialLogin('Apple')}
@@ -361,7 +414,6 @@ export default function AuthScreen() {
                       <Text style={styles.socialButtonText}>Sign in with Apple</Text>
                     </TouchableOpacity>
 
-                    {/* Facebook */}
                     <TouchableOpacity
                       style={styles.socialButton}
                       onPress={() => handleSocialLogin('Facebook')}
@@ -371,15 +423,16 @@ export default function AuthScreen() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Create Account Button */}
                   <TouchableOpacity
-                    style={styles.createAccountButton}
+                    style={[styles.createAccountButton, isLoading && { opacity: 0.7 }]}
                     onPress={handleCreateAccount}
+                    disabled={isLoading}
                   >
-                    <Text style={styles.createAccountButtonText}>Create account</Text>
+                    <Text style={styles.createAccountButtonText}>
+                      {isLoading ? 'Creating account...' : 'Create account'}
+                    </Text>
                   </TouchableOpacity>
 
-                  {/* Switch to Login */}
                   <View style={styles.switchRow}>
                     <Text style={styles.switchText}>Already have an account? </Text>
                     <TouchableOpacity onPress={() => setStage('login')}>
@@ -387,7 +440,6 @@ export default function AuthScreen() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* Music Credit */}
                   <View style={styles.musicCreditContainer}>
                     <Text style={[styles.musicCreditText, { fontWeight: 'bold', color: '#FFFFFF' }]}>Music</Text>
                     <Text style={styles.musicCreditText}>&quot;Eliza&apos;s Morning Wander&quot; by Matt Minikus</Text>
@@ -401,7 +453,6 @@ export default function AuthScreen() {
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
