@@ -261,7 +261,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             const clerkUserData = {
               id: clerkUser.id,
               email: email,
-              name: clerkUser.fullName || `${clerkUser.firstName ?? ''} ${clerkUser.lastName ?? ''}`.trim() || 'User',
+              name: clerkUser.fullName || 
+                    (clerkUser.firstName && clerkUser.lastName ? `${clerkUser.firstName} ${clerkUser.lastName}` : '') ||
+                    clerkUser.firstName || 
+                    email.split('@')[0] || 
+                    'User',
               role: 'student',
               verified: clerkUser.emailAddresses.some(e => e.verification?.status === 'verified'),
             };
@@ -276,7 +280,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const userData = user || {
         id: clerkUser.id,
         email: email,
-        name: clerkUser.fullName || `${clerkUser.firstName ?? ''} ${clerkUser.lastName ?? ''}`.trim(),
+        name: clerkUser.fullName || 
+              (clerkUser.firstName && clerkUser.lastName ? `${clerkUser.firstName} ${clerkUser.lastName}` : '') ||
+              clerkUser.firstName || 
+              email.split('@')[0] || 
+              'User',
         role: 'student',
         verified: clerkUser.emailAddresses.some(e => e.verification?.status === 'verified'),
       };

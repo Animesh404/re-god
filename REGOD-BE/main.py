@@ -1108,7 +1108,7 @@ async def refresh_access_token(request: RefreshTokenRequest):
         )
 
 @app.post("/api/auth/clerk-exchange", response_model=AuthResponse)
-async def clerk_exchange(request: ClerkExchangeRequest):
+async def clerk_exchange(request: ClerkExchangeRequest, credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Exchange a Clerk user (by clerk_user_id or email) for backend JWT."""
     try:
         identifier = request.identifier
@@ -1116,6 +1116,48 @@ async def clerk_exchange(request: ClerkExchangeRequest):
         
         if not identifier:
             raise HTTPException(status_code=400, detail={"error": {"code": "BAD_REQUEST", "message": "Missing identifier"}})
+
+        # Extract user data from Clerk JWT token
+        clerk_user_data = None
+        try:
+            # Try to verify the Clerk JWT token to get user data
+            clerk_payload = verify_clerk_jwt(credentials.credentials)
+            clerk_user_data = {
+                "name": (
+                    clerk_payload.get("name") or
+                    clerk_payload.get("full_name") or
+                    clerk_payload.get("display_name") or
+                    ""
+                ),
+                "email": (
+                    clerk_payload.get("email") or
+                    clerk_payload.get("email_address") or
+                    clerk_payload.get("primary_email") or
+                    identifier
+                ),
+                "email_verified": (
+                    clerk_payload.get("email_verified") or
+                    clerk_payload.get("verified") or
+                    clerk_payload.get("email_verification") or
+                    False
+                ),
+                "clerk_user_id": (
+                    clerk_payload.get("sub") or
+                    clerk_payload.get("user_id") or
+                    clerk_payload.get("id") or
+                    ""
+                )
+            }
+            logger.info(f"Extracted Clerk user data: {clerk_user_data}")
+        except Exception as e:
+            logger.warning(f"Failed to extract Clerk user data: {e}")
+            # Fallback to basic data
+            clerk_user_data = {
+                "name": "User",
+                "email": identifier,
+                "email_verified": False,
+                "clerk_user_id": None
+            }
 
         async with db_pool.acquire() as conn:
             logger.info(f"Looking up user with identifier: {identifier}")
@@ -1136,6 +1178,9 @@ async def clerk_exchange(request: ClerkExchangeRequest):
                 try:
                     logger.info(f"Creating new user for identifier: {identifier}")
                     
+                    # Use extracted name or fallback to email prefix
+                    user_name = clerk_user_data["name"].strip() if clerk_user_data["name"].strip() else identifier.split('@')[0]
+                    
                     # Create new user using asyncpg
                     user_id = await conn.fetchval(
                         """
@@ -1143,11 +1188,11 @@ async def clerk_exchange(request: ClerkExchangeRequest):
                         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5) 
                         RETURNING id
                         """,
-                        identifier,
-                        "User",  # Default name
-                        True,    # is_verified
+                        clerk_user_data["email"],
+                        user_name,
+                        clerk_user_data["email_verified"],
                         True,    # is_active
-                        None     # clerk_user_id (will be updated later if needed)
+                        clerk_user_data["clerk_user_id"]
                     )
                     
                     # Assign default student role
@@ -1202,6 +1247,11 @@ async def clerk_exchange(request: ClerkExchangeRequest):
                 "role": role,
                 "verified": user["is_verified"]
             }
+            
+            # If we have updated user data from Clerk, use it
+            if clerk_user_data and clerk_user_data["name"].strip():
+                user_data["name"] = clerk_user_data["name"]
+                user_data["verified"] = clerk_user_data["email_verified"]
 
             logger.info(f"Clerk exchange successful for user: {user['email']}")
 

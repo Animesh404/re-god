@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import MusicCard from '@/components/MusicCard';
+import SuccessModal from '@/components/SuccessModal';
 import ApiService, { type Module } from '../../src/services/api';
 import { useAuth } from '../../src/contexts/AuthContext';
 
@@ -41,6 +43,8 @@ export default function LessonScreen() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [responses, setResponses] = useState<QuizResponse[]>([]);
   const [reflectionText, setReflectionText] = useState('');
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [nextModule, setNextModule] = useState<Module | null>(null);
 
   // Response Modal Component
   function ResponseModal({ visible, onClose, questions, onSubmit, title }: ResponseModalProps) {
@@ -213,9 +217,13 @@ export default function LessonScreen() {
         throw new Error('Lesson not found');
       }
       
-      // console.log('Found module:', foundModule);
-      // console.log('Module header_image_url:', foundModule.header_image_url);
+      // Find the next module in the sequence
+      const sortedModules = modules.sort((a, b) => a.order - b.order);
+      const currentIndex = sortedModules.findIndex(m => m.id === Number(moduleId));
+      const nextModule = currentIndex < sortedModules.length - 1 ? sortedModules[currentIndex + 1] : null;
+      
       setModule(foundModule);
+      setNextModule(nextModule);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load lesson');
       console.error('Error loading lesson:', err);
@@ -331,19 +339,8 @@ export default function LessonScreen() {
         );
       }
 
-      Alert.alert(
-        'Response Submitted',
-        'Thank you for your response. The lesson has been marked as completed.',
-        [
-          {
-            text: 'Continue',
-            onPress: () => {
-              // Navigate back to course screen or next lesson
-              router.replace('/(tabs)/course');
-            }
-          }
-        ]
-      );
+      // Show success modal instead of alert
+      setShowSuccessModal(true);
     } catch (error) {
       console.error('Error submitting response:', error);
       Alert.alert('Error', 'Failed to submit response. Please try again.');
@@ -372,6 +369,18 @@ export default function LessonScreen() {
     Alert.alert(action.replace('_', ' ').toUpperCase(), content);
   };
 
+  const handleSuccessContinue = () => {
+    setShowSuccessModal(false);
+    
+    if (nextModule && courseId) {
+      // Navigate to next module
+      router.push(`/lesson?moduleId=${nextModule.id}&courseId=${courseId}`);
+    } else {
+      // No next module, go back to course screen
+      router.replace('/(tabs)/course');
+    }
+  };
+
   // Helper function to convert relative URLs to full URLs
   const getImageUrl = (imageUrl: string | null): any => {
     if (!imageUrl) return null;
@@ -383,53 +392,130 @@ export default function LessonScreen() {
 
   if (authLoading || loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        {/* Custom Header */}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton} 
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Course</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6B8E23" />
           <Text style={styles.loadingText}>
             {authLoading ? 'Authenticating...' : 'Loading lesson...'}
           </Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (!isAuthenticated) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        {/* Custom Header */}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton} 
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Course</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Please log in to view lessons</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (error) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        {/* Custom Header */}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton} 
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Course</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Error: {error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={loadModule}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (!module) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        {/* Custom Header */}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton} 
+            onPress={() => router.back()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#333" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Course</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Lesson not found</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      
+      {/* Custom Header */}
+      <View style={styles.header}>
+        <TouchableOpacity 
+          style={styles.backButton} 
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              // Fallback to course screen if no previous screen
+              router.replace('/(tabs)/course');
+            }
+          }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Course</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
+      <ScrollView style={styles.scrollView}>
         {/* Header Image */}
         {module.header_image_url ? (
         <Image 
@@ -501,17 +587,14 @@ export default function LessonScreen() {
           {module.music_selection && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Music selection</Text>
-              <View style={styles.musicCard}>
-                <View style={styles.musicContent}>
-                  <Text style={styles.musicTitle}>{module.music_selection}</Text>
-                  {module.media_url && (
-                    <TouchableOpacity style={styles.playButton}>
-                      <Ionicons name="play" size={16} color="white" />
-                      <Text style={styles.playButtonText}>Play</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
+            <MusicCard 
+              title={module.music_selection}
+              mediaUrl={module.media_url}
+              onPlay={() => {
+                // Handle play functionality
+                console.log('Playing music:', module.music_selection);
+              }}
+            />
           </View>
           )}
 
@@ -563,7 +646,16 @@ export default function LessonScreen() {
           onSubmit={handleResponseSubmit}
         />
       )}
-    </SafeAreaView>
+
+      {/* Success Modal */}
+      <SuccessModal
+        visible={showSuccessModal}
+        onContinue={handleSuccessContinue}
+        title="Nice work!"
+        subtitle={nextModule ? "You've unlocked the next lesson!" : "You've completed this lesson!"}
+        buttonText="Continue"
+      />
+    </View>
   );
 }
 
@@ -571,6 +663,38 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FBF9F4',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 50, // Account for status bar
+    paddingBottom: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)', // Light translucent background
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+  },
+  backButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+  },
+  headerSpacer: {
+    width: 40, // Same width as back button to center the title
+  },
+  scrollView: {
+    flex: 1,
+    paddingTop: 100, // Account for header height
   },
   loadingContainer: {
     flex: 1,
@@ -701,45 +825,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.8)',
     fontStyle: 'italic',
-  },
-  musicCard: {
-    backgroundColor: '#6B8E23',
-    borderRadius: 12,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  musicContent: {
-    flex: 1,
-  },
-  musicTitle: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: 'white',
-    marginBottom: 8,
-  },
-  playButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 15,
-    marginTop: 8,
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  playButtonText: {
-    color: 'white',
-    fontSize: 12,
-    marginLeft: 4,
   },
   actionButtons: {
     marginTop: 20,

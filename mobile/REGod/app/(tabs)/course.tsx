@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ImageSourcePropType, ActivityIndicator, Modal, FlatList, Dimensions, Animated } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ImageSourcePropType, ActivityIndicator, Modal, FlatList, Dimensions, Animated, StatusBar } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import CircularProgress from '@/components/ui/CircularProgress';
+import LessonIndexModal from '@/components/LessonIndexModal';
 import ApiService, { type Course, type Chapter, type Module, type DashboardResponse } from '../../src/services/api';
 import { useAuth } from '../../src/contexts/AuthContext';
 
@@ -43,89 +44,9 @@ interface LessonProgress {
   lastAccessedAt: string;
 }
 
-interface LessonIndexModalProps {
-  visible: boolean;
-  onClose: () => void;
-  modules: Module[];
-  courseTitle: string;
-  onLessonPress: (module: Module) => void;
-  completedLessons: Set<number>;
-}
-
 interface ChapterCardProps {
   chapter: Chapter;
   onPress: () => void;
-}
-
-// Lesson Index Modal Component
-function LessonIndexModal({
-  visible,
-  onClose,
-  modules,
-  courseTitle,
-  onLessonPress,
-  completedLessons
-}: LessonIndexModalProps) {
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      presentationStyle="pageSheet"
-      onRequestClose={onClose}
-    >
-      <SafeAreaView style={modalStyles.container}>
-        <View style={modalStyles.header}>
-          <Text style={modalStyles.headerTitle}>{courseTitle}</Text>
-          <TouchableOpacity onPress={onClose} style={modalStyles.closeButton}>
-            <Ionicons name="close" size={24} color="black" />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView style={modalStyles.content}>
-          <Text style={modalStyles.sectionTitle}>Lesson Index</Text>
-          {modules.map((module, index) => {
-            const isCompleted = completedLessons.has(module.id);
-            const isLocked = index > 0 && !completedLessons.has(modules[index - 1]?.id);
-
-            return (
-              <TouchableOpacity
-                key={module.id}
-                style={[
-                  modalStyles.lessonItem,
-                  isCompleted && modalStyles.completedLesson,
-                  isLocked && modalStyles.lockedLesson
-                ]}
-                onPress={() => !isLocked && onLessonPress(module)}
-                disabled={isLocked}
-              >
-                <View style={modalStyles.lessonContent}>
-                  <View style={modalStyles.lessonHeader}>
-                    <Text style={modalStyles.lessonNumber}>{index + 1}</Text>
-                    {isLocked && <Ionicons name="lock-closed" size={16} color="gray" />}
-                    {isCompleted && <Ionicons name="checkmark-circle" size={16} color="#6B8E23" />}
-                  </View>
-                  <Text style={[
-                    modalStyles.lessonTitle,
-                    isLocked && modalStyles.lockedText
-                  ]}>
-                    {module.title}
-                  </Text>
-                  {module.description && (
-                    <Text style={[
-                      modalStyles.lessonDescription,
-                      isLocked && modalStyles.lockedText
-                    ]}>
-                      {module.description}
-                    </Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
-  );
 }
 
 export default function CourseScreen() {
@@ -268,7 +189,7 @@ export default function CourseScreen() {
 
   const handleModulePress = async (module: Module) => {
     try {
-      console.log('handleModulePress called with module:', { id: module.id, title: module.title, course_id: module.course_id });
+      // console.log('handleModulePress called with module:', { id: module.id, title: module.title, course_id: module.course_id });
       
       // Record that user accessed this module
       await ApiService.updateCourseProgress(module.course_id, 0, module.id, 'visited');
@@ -369,40 +290,61 @@ export default function CourseScreen() {
 
   if (authLoading || loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        {/* Custom Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Course</Text>
+        </View>
+
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6B8E23" />
           <Text style={styles.loadingText}>
             {authLoading ? 'Authenticating...' : 'Loading courses...'}
           </Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   // Don't render anything if user is not authenticated and auth is still loading
   if (!isAuthenticated && !user) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        {/* Custom Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Course</Text>
+        </View>
+
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6B8E23" />
           <Text style={styles.loadingText}>Please log in to view courses</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
 
   if (error) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        {/* Custom Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Course</Text>
+        </View>
+
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Error: {error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={loadDashboard}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -426,7 +368,7 @@ export default function CourseScreen() {
           progressColor="#6B8E23"
         />
         <View style={styles.progressTextContainer}>
-          <Text style={styles.progressText}>{course.overall_progress_percentage.toFixed(2)}%</Text>
+          <Text style={styles.progressText}>{course.overall_progress_percentage.toFixed(1)}%</Text>
         </View>
         <Text style={styles.progressLabel}>Course Progress</Text>
       </View>
@@ -434,16 +376,15 @@ export default function CourseScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerSpacer} />
-          <Text style={styles.headerTitle}>Course</Text>
-          <TouchableOpacity>
-            <Ionicons name="menu" size={28} color="black" />
-          </TouchableOpacity>
-        </View>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      
+      {/* Custom Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Course</Text>
+      </View>
+
+      <ScrollView style={styles.scrollView}>
 
         {/* Course Card Carousel */}
         {availableCourses.length > 0 && (
@@ -514,7 +455,7 @@ export default function CourseScreen() {
                                   progressColor="#FFFFFF"
                                 />
                                 <Text style={styles.continueProgressText}>
-                                  {dashboard.last_visited_course.overall_progress_percentage.toFixed(2)}%
+                                  {dashboard.last_visited_course.overall_progress_percentage.toFixed(1)}%
                                 </Text>
                               </View>
                               <Text style={styles.continueCardTitle}>{dashboard.last_visited_course.course_title}</Text>
@@ -536,21 +477,21 @@ export default function CourseScreen() {
                     ? dashboard?.last_visited_course?.last_visited_module_id 
                     : null;
                   
-                  console.log('Continue card debug:', {
-                    currentCourseId: currentCourse?.course_id,
-                    lastVisitedCourseId: dashboard?.last_visited_course?.course_id,
-                    lastVisitedModule,
-                    modules: modules.map(m => ({ id: m.id, title: m.title })),
-                    currentChapter: currentChapter?.chapter_title,
-                    nextModule: currentChapter?.next_module,
-                    completedLessons: Array.from(completedLessons),
-                    chapterProgress: chapterProgress.map(ch => ({ 
-                      id: ch.chapter_id, 
-                      title: ch.chapter_title, 
-                      next_module: ch.next_module,
-                      is_completed: ch.is_completed 
-                    }))
-                  });
+                  // console.log('Continue card debug:', {
+                  //   currentCourseId: currentCourse?.course_id,
+                  //   lastVisitedCourseId: dashboard?.last_visited_course?.course_id,
+                  //   lastVisitedModule,
+                  //   modules: modules.map(m => ({ id: m.id, title: m.title })),
+                  //   currentChapter: currentChapter?.chapter_title,
+                  //   nextModule: currentChapter?.next_module,
+                  //   completedLessons: Array.from(completedLessons),
+                  //   chapterProgress: chapterProgress.map(ch => ({ 
+                  //     id: ch.chapter_id, 
+                  //     title: ch.chapter_title, 
+                  //     next_module: ch.next_module,
+                  //     is_completed: ch.is_completed 
+                  //   }))
+                  // });
                   
                   const targetModule = lastVisitedModule 
                     ? modules.find(m => m.id === lastVisitedModule)
@@ -558,7 +499,7 @@ export default function CourseScreen() {
                       ? modules.find(m => m.id === currentChapter.next_module.id)
                       : modules.find(m => !completedLessons.has(m.id)); // Fallback to first incomplete module
                   
-                  console.log('Target module:', targetModule);
+                  // console.log('Target module:', targetModule);
 
                   return (
                     <TouchableOpacity
@@ -584,7 +525,7 @@ export default function CourseScreen() {
                             progressColor="#FFFFFF"
                           />
                           <Text style={styles.continueProgressText}>
-                            {currentChapter.progress_percentage.toFixed(2)}%
+                            {currentChapter.progress_percentage.toFixed(1)}%
                           </Text>
                         </View>
                         <Text style={styles.continueCardTitle}>{currentChapter.chapter_title}</Text>
@@ -639,7 +580,7 @@ export default function CourseScreen() {
                           <View 
                             style={[
                               styles.progressContainer, 
-                              { width: `${chapterProgress.progress_percentage.toFixed(2)}%` }
+                              { width: `${chapterProgress.progress_percentage.toFixed(1)}%` }
                             ]} 
                           />
                         </View>
@@ -676,8 +617,10 @@ export default function CourseScreen() {
         courseTitle={currentCourseTitle}
         onLessonPress={handleModulePress}
         completedLessons={completedLessons}
+        progressPercentage={chapterProgress.length > 0 ? chapterProgress[0]?.progress_percentage || 0 : 0}
+        chapterTitle="Complete"
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -688,19 +631,26 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  headerSpacer: {
-    width: 28, // Same width as the menu icon to balance the layout
+    justifyContent: 'center',
+    paddingTop: 60, // Account for status bar
+    paddingBottom: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)', // Light translucent background
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
+    color: '#333',
     textAlign: 'center',
+  },
+  scrollView: {
     flex: 1,
+    paddingTop: 100, // Account for header height
   },
   courseCarousel: {
     maxHeight: 450, // Adjust as needed
@@ -770,7 +720,7 @@ const styles = StyleSheet.create({
   },
   availableCoursesSection: {
     paddingHorizontal: 5,
-    paddingVertical: 15,
+    marginBottom: 50,
     alignItems: 'center', // Center align the course cards
   },
   chapterCard: {
@@ -866,6 +816,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     marginRight: 15,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
   },
   continueCardImage: {
     width: '100%',
@@ -881,29 +839,38 @@ const styles = StyleSheet.create({
   },
   continueCardContent: {
     position: 'absolute',
-    bottom: 0,
     left: 0,
     right: 0,
+    bottom: 10,
     padding: 15,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   continueProgressContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    marginRight: 15,
   },
   continueProgressText: {
     position: 'absolute',
+    textAlign: 'center',
     color: 'white',
     fontSize: 12,
     fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   continueCardTitle: {
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'center',
+    flex: 1,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
 
   // Lesson Index Button
@@ -941,93 +908,5 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-});
-
-// Modal Styles
-const modalStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: 'white',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  closeButton: {
-    padding: 5,
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-  },
-  lessonItem: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    marginBottom: 15,
-    padding: 15,
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  completedLesson: {
-    backgroundColor: '#F0F8F0',
-    borderColor: '#6B8E23',
-  },
-  lockedLesson: {
-    backgroundColor: '#F5F5F5',
-    borderColor: '#CCC',
-  },
-  lessonContent: {
-    flex: 1,
-  },
-  lessonHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  lessonNumber: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#6B8E23',
-    marginRight: 8,
-    minWidth: 24,
-  },
-  lessonTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  lockedText: {
-    color: '#999',
-  },
-  lessonDescription: {
-    fontSize: 14,
-    color: '#666',
-    lineHeight: 20,
   },
 });

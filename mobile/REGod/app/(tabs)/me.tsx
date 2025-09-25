@@ -1,33 +1,59 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, Switch } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, Switch, StatusBar, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useAuth } from '../../src/contexts/AuthContext'; // Corrected path
+import ApiService, { type Note } from '../../src/services/api'; // Corrected path
 
 export default function MeScreen() {
   const router = useRouter();
+  const { user, logout, loading: authLoading } = useAuth(); // Get user, logout, and authLoading from context
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [remindersEnabled, setRemindersEnabled] = useState(true);
+  const [recentNotes, setRecentNotes] = useState<Note[]>([]); // State for recent notes
+
+  useEffect(() => {
+    const fetchRecentNotes = async () => {
+      try {
+        const notes = await ApiService.getNotes();
+        // Get the 3 most recent notes
+        setRecentNotes(notes.slice(0, 3));
+      } catch (error) {
+        console.error("Failed to fetch recent notes:", error);
+      }
+    };
+
+    if (user) {
+      fetchRecentNotes();
+    }
+  }, [user]);
+
+  if (authLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6B8E23" />
+      </View>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerSpacer} />
-          <Text style={styles.headerTitle}>Me</Text>
-          <TouchableOpacity>
-            <Ionicons name="menu" size={28} color="black" />
-          </TouchableOpacity>
-        </View>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+      
+      {/* Custom Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Me</Text>
+      </View>
 
+      <ScrollView style={styles.scrollView}>
         {/* Profile Section */}
         <View style={styles.profileSection}>
           <Image 
             source={require('@/assets/images/favicon.png')} 
             style={styles.avatar} 
           />
-          <Text style={styles.name}>Terri Philips</Text>
+          <Text style={styles.name}>{user?.name || 'User'}</Text>
           <TouchableOpacity style={styles.editProfileButton}>
             <Text style={styles.editProfileButtonText}>Edit profile</Text>
           </TouchableOpacity>
@@ -38,9 +64,24 @@ export default function MeScreen() {
           {/* My Stuff */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>My stuff</Text>
+            {/* Recent Notes Section */}
+            {recentNotes.length > 0 && (
+              <View style={styles.recentNotesContainer}>
+                {recentNotes.map((note) => (
+                  <TouchableOpacity 
+                    key={note.id} 
+                    style={styles.noteCard}
+                    onPress={() => router.push({ pathname: '/new-note', params: { noteId: note.id } })}
+                  >
+                    <Text style={styles.noteCardTitle} numberOfLines={1}>{note.lesson_title}</Text>
+                    <Text style={styles.noteCardContent} numberOfLines={2}>{note.note_content}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
             <TouchableOpacity 
               style={styles.menuItem}
-              onPress={() => router.push('/(tabs)/notes' as any)}
+              onPress={() => router.push('/notes')}
             >
               <Text style={styles.menuItemText}>Notes</Text>
               <Ionicons name="chevron-forward" size={24} color="gray" />
@@ -81,9 +122,16 @@ export default function MeScreen() {
               <Ionicons name="chevron-forward" size={24} color="gray" />
             </TouchableOpacity>
           </View>
+
+          {/* Logout Button */}
+          <View style={styles.section}>
+            <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+              <Text style={styles.logoutButtonText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -92,21 +140,34 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FBF9F4',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FBF9F4',
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  headerSpacer: {
-    width: 28, // Same width as the menu icon to balance the layout
+    justifyContent: 'center',
+    paddingTop: 60,
+    paddingBottom: 15,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
+    color: '#333',
     textAlign: 'center',
+  },
+  scrollView: {
     flex: 1,
+    paddingTop: 100,
   },
   profileSection: {
     alignItems: 'center',
@@ -158,5 +219,39 @@ const styles = StyleSheet.create({
   },
   menuItemText: {
     fontSize: 16,
+  },
+  recentNotesContainer: {
+    marginBottom: 10,
+  },
+  noteCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 15,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  noteCardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 5,
+  },
+  noteCardContent: {
+    fontSize: 14,
+    color: '#666',
+  },
+  logoutButton: {
+    backgroundColor: '#FF3B30',
+    borderRadius: 10,
+    padding: 15,
+    alignItems: 'center',
+  },
+  logoutButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

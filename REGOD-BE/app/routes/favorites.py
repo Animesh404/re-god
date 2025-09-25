@@ -226,6 +226,7 @@ async def get_chapter_favorites(
             id=fav.id,
             user_id=str(fav.user_id),
             chapter_id=fav.chapter_id,
+            course_id=chapter.course_id,
             created_at=fav.created_at,
             chapter_title=chapter.title,
             course_title=course.title,

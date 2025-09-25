@@ -1,10 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, FlatList, ImageSourcePropType, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, FlatList, ImageSourcePropType } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import LessonIndexModal from '@/components/LessonIndexModal';
+import MusicCard from '@/components/MusicCard';
 import ApiService, { type Module, type Chapter } from '../../src/services/api';
 import { useAuth } from '../../src/contexts/AuthContext';
+
+// Default placeholder image for fallback
+const defaultChapterImage = require('@/assets/images/logo.png');
+
+// Helper function to convert relative URLs to full URLs
+const getImageUrl = (imageUrl: string | null): any => {
+  if (!imageUrl) return defaultChapterImage;
+  if (imageUrl.startsWith('http')) return { uri: imageUrl };
+  return { uri: `https://bf5773da486c.ngrok-free.app${imageUrl}` };
+};
 
 // Interfaces for data types
 interface FavoriteLesson {
@@ -43,10 +55,12 @@ export default function FavoritesScreen() {
   const [showLessonModal, setShowLessonModal] = useState(false);
   const [selectedChapter, setSelectedChapter] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [favoriteMusic, setFavoriteMusic] = useState<any[]>([]);
 
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
       loadFavoritedChapters();
+      loadFavoriteMusic();
     }
   }, [isAuthenticated, authLoading]);
 
@@ -59,6 +73,47 @@ export default function FavoritesScreen() {
       console.error('Error loading favorited chapters:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadFavoriteMusic = async () => {
+    try {
+      // Get all favorited chapters
+      const favoritedChaptersData = await ApiService.getChapterFavorites();
+      const musicItems: any[] = [];
+
+      // For each favorited chapter, get its modules and extract music
+      for (const chapter of favoritedChaptersData) {
+        try {
+          // Use course_id if available, otherwise skip this chapter
+          const courseId = (chapter as any).course_id;
+          if (!courseId) {
+            console.warn(`Chapter ${chapter.chapter_id} missing course_id, skipping music extraction`);
+            continue;
+          }
+          
+          const modules = await ApiService.getCourseModules(courseId);
+          const musicModules = modules.filter(module => module.music_selection);
+          
+          musicModules.forEach(module => {
+            musicItems.push({
+              id: `${chapter.chapter_id}-${module.id}`,
+              title: module.music_selection,
+              mediaUrl: module.media_url,
+              chapterTitle: chapter.chapter_title,
+              courseTitle: chapter.course_title,
+              moduleId: module.id,
+              courseId: courseId
+            });
+          });
+        } catch (error) {
+          console.error(`Error loading modules for chapter ${chapter.chapter_id}:`, error);
+        }
+      }
+
+      setFavoriteMusic(musicItems);
+    } catch (error) {
+      console.error('Error loading favorite music:', error);
     }
   };
 
@@ -91,7 +146,7 @@ export default function FavoritesScreen() {
       onPress={() => handleChapterPress(item)}
     >
       <Image 
-        source={item.cover_image_url ? { uri: item.cover_image_url } : require('@/assets/images/default-chapter.jpg')} 
+        source={getImageUrl(item.cover_image_url)} 
         style={styles.chapterImage} 
       />
       <View style={styles.chapterTextContainer}>
@@ -154,7 +209,7 @@ export default function FavoritesScreen() {
 
         {/* Favorited Chapters Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Favorited Chapters</Text>
+          {/* <Text style={styles.sectionTitle}>Favorited Chapters</Text> */}
           {loading ? (
             <Text style={styles.loadingText}>Loading favorited chapters...</Text>
           ) : favoritedChapters.length > 0 ? (
@@ -174,54 +229,45 @@ export default function FavoritesScreen() {
         </View>
 
         {/* Music Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Music</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.musicList}>
-            {favoriteMusic.map(item => <View key={item.id}>{renderMusicItem({ item })}</View>)}
-          </ScrollView>
-        </View>
+        {favoriteMusic.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Music</Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.musicScrollContent}
+            >
+              {favoriteMusic.map(item => (
+                <View key={item.id} style={styles.musicItemContainer}>
+                  <MusicCard 
+                    title={item.title}
+                    mediaUrl={item.mediaUrl}
+                    onPlay={() => {
+                      console.log('Playing music:', item.title);
+                      // Handle play functionality
+                    }}
+                    style={styles.musicCard}
+                  />
+                  <Text style={styles.musicChapterTitle}>{item.chapterTitle}</Text>
+                  <Text style={styles.musicCourseTitle}>{item.courseTitle}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
       </ScrollView>
 
       {/* Lesson Modal */}
-      <Modal
+      <LessonIndexModal
         visible={showLessonModal}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowLessonModal(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{selectedChapter?.chapter_title}</Text>
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => setShowLessonModal(false)}
-            >
-              <Ionicons name="close" size={24} color="#333" />
-            </TouchableOpacity>
-          </View>
-          
-          <ScrollView style={styles.modalContent}>
-            {modules.map((module, index) => (
-              <TouchableOpacity
-                key={module.id}
-                style={styles.moduleItem}
-                onPress={() => handleModulePress(module)}
-              >
-                <View style={styles.moduleNumber}>
-                  <Text style={styles.moduleNumberText}>{index + 1}</Text>
-                </View>
-                <View style={styles.moduleContent}>
-                  <Text style={styles.moduleTitle}>{module.title}</Text>
-                  {module.description && (
-                    <Text style={styles.moduleDescription}>{module.description}</Text>
-                  )}
-                </View>
-                <Ionicons name="chevron-forward" size={20} color="gray" />
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+        onClose={() => setShowLessonModal(false)}
+        modules={modules}
+        courseTitle={selectedChapter?.course_title || ''}
+        onLessonPress={handleModulePress}
+        completedLessons={new Set()}
+        progressPercentage={selectedChapter?.progress_percentage || 0}
+        chapterTitle={selectedChapter?.chapter_title || 'Complete'}
+      />
     </SafeAreaView>
   );
 }
@@ -291,13 +337,6 @@ const styles = StyleSheet.create({
   },
   musicList: {
     paddingRight: 20,
-  },
-  musicCard: {
-    backgroundColor: '#6B8E23',
-    borderRadius: 10,
-    padding: 15,
-    width: 200,
-    marginRight: 15,
   },
   musicTitleContainer: {
     flexDirection: 'row',
@@ -406,72 +445,26 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
-  // Modal styles
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#FBF9F4',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  // Music section styles
+  musicScrollContent: {
     paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    gap: 15,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    flex: 1,
+  musicItemContainer: {
+    width: 200,
+    marginRight: 15,
   },
-  closeButton: {
-    padding: 8,
+  musicCard: {
+    marginBottom: 8,
   },
-  modalContent: {
-    flex: 1,
-    padding: 20,
-  },
-  moduleItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'white',
-    borderRadius: 12,
-    marginBottom: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  moduleNumber: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#6B8E23',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-  },
-  moduleNumberText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  moduleContent: {
-    flex: 1,
-  },
-  moduleTitle: {
-    fontSize: 16,
+  musicChapterTitle: {
+    fontSize: 14,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  moduleDescription: {
-    fontSize: 14,
+  musicCourseTitle: {
+    fontSize: 12,
     color: '#666',
-    lineHeight: 20,
   },
 });

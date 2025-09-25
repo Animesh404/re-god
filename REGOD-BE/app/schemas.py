@@ -305,6 +305,7 @@ class ChapterFavoriteResponse(BaseModel):
     id: int
     user_id: str
     chapter_id: int
+    course_id: int
     created_at: datetime
     chapter_title: str
     course_title: str
