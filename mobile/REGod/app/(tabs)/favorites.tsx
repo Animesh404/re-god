@@ -1,7 +1,10 @@
-import React from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, FlatList, ImageSourcePropType } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, FlatList, ImageSourcePropType, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import ApiService, { type Module, type Chapter } from '../../src/services/api';
+import { useAuth } from '../../src/contexts/AuthContext';
 
 // Interfaces for data types
 interface FavoriteLesson {
@@ -33,6 +36,85 @@ const favoriteMusic: FavoriteMusic[] = [
 ];
 
 export default function FavoritesScreen() {
+  const router = useRouter();
+  const { isAuthenticated, loading: authLoading } = useAuth();
+  const [favoritedChapters, setFavoritedChapters] = useState<any[]>([]);
+  const [modules, setModules] = useState<Module[]>([]);
+  const [showLessonModal, setShowLessonModal] = useState(false);
+  const [selectedChapter, setSelectedChapter] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (isAuthenticated && !authLoading) {
+      loadFavoritedChapters();
+    }
+  }, [isAuthenticated, authLoading]);
+
+  const loadFavoritedChapters = async () => {
+    try {
+      setLoading(true);
+      const favoritedChaptersData = await ApiService.getChapterFavorites();
+      setFavoritedChapters(favoritedChaptersData);
+    } catch (error) {
+      console.error('Error loading favorited chapters:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleChapterPress = async (chapter: any) => {
+    try {
+      // Load modules for this chapter
+      const courseModules = await ApiService.getCourseModules(chapter.course_id);
+      setModules(courseModules);
+      setSelectedChapter(chapter);
+      setShowLessonModal(true);
+    } catch (error) {
+      console.error('Error loading chapter modules:', error);
+    }
+  };
+
+  const handleModulePress = (module: Module) => {
+    setShowLessonModal(false);
+    router.push({
+      pathname: '/(tabs)/lesson' as any,
+      params: {
+        moduleId: module.id.toString(),
+        courseId: module.course_id.toString()
+      }
+    });
+  };
+
+  const renderChapterItem = ({ item }: { item: any }) => (
+    <TouchableOpacity 
+      style={styles.chapterItem}
+      onPress={() => handleChapterPress(item)}
+    >
+      <Image 
+        source={item.cover_image_url ? { uri: item.cover_image_url } : require('@/assets/images/default-chapter.jpg')} 
+        style={styles.chapterImage} 
+      />
+      <View style={styles.chapterTextContainer}>
+        <Text style={styles.chapterTitle}>{item.chapter_title}</Text>
+        <Text style={styles.chapterSubtitle}>{item.course_title}</Text>
+        <View style={styles.progressContainer}>
+          <View style={styles.progressBar}>
+            <View 
+              style={[
+                styles.progressFill, 
+                { width: `${item.progress_percentage.toFixed(2)}%` }
+              ]} 
+            />
+          </View>
+          <Text style={styles.progressText}>
+            {item.completed_modules}/{item.total_modules} modules
+          </Text>
+        </View>
+      </View>
+      <Ionicons name="chevron-forward" size={24} color="gray" />
+    </TouchableOpacity>
+  );
+
   const renderLessonItem = ({ item }: { item: FavoriteLesson }) => (
     <TouchableOpacity style={styles.lessonItem}>
       <Image source={item.image} style={styles.lessonImage} />
@@ -63,21 +145,32 @@ export default function FavoritesScreen() {
       <ScrollView>
         {/* Header */}
         <View style={styles.header}>
+          <View style={styles.headerSpacer} />
           <Text style={styles.headerTitle}>Favorites</Text>
           <TouchableOpacity>
             <Ionicons name="menu" size={28} color="black" />
           </TouchableOpacity>
         </View>
 
-        {/* Lessons Section */}
+        {/* Favorited Chapters Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Lessons</Text>
-          <FlatList
-            data={favoriteLessons}
-            renderItem={renderLessonItem}
-            keyExtractor={item => item.id}
-            scrollEnabled={false}
-          />
+          <Text style={styles.sectionTitle}>Favorited Chapters</Text>
+          {loading ? (
+            <Text style={styles.loadingText}>Loading favorited chapters...</Text>
+          ) : favoritedChapters.length > 0 ? (
+            <FlatList
+              data={favoritedChapters}
+              renderItem={renderChapterItem}
+              keyExtractor={item => item.chapter_id.toString()}
+              scrollEnabled={false}
+            />
+          ) : (
+            <View style={styles.emptyState}>
+              <Ionicons name="heart-outline" size={48} color="#ccc" />
+              <Text style={styles.emptyStateText}>No favorited chapters yet</Text>
+              <Text style={styles.emptyStateSubtext}>Tap the heart icon on chapter cards to add them to favorites</Text>
+            </View>
+          )}
         </View>
 
         {/* Music Section */}
@@ -88,6 +181,47 @@ export default function FavoritesScreen() {
           </ScrollView>
         </View>
       </ScrollView>
+
+      {/* Lesson Modal */}
+      <Modal
+        visible={showLessonModal}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowLessonModal(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{selectedChapter?.chapter_title}</Text>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowLessonModal(false)}
+            >
+              <Ionicons name="close" size={24} color="#333" />
+            </TouchableOpacity>
+          </View>
+          
+          <ScrollView style={styles.modalContent}>
+            {modules.map((module, index) => (
+              <TouchableOpacity
+                key={module.id}
+                style={styles.moduleItem}
+                onPress={() => handleModulePress(module)}
+              >
+                <View style={styles.moduleNumber}>
+                  <Text style={styles.moduleNumberText}>{index + 1}</Text>
+                </View>
+                <View style={styles.moduleContent}>
+                  <Text style={styles.moduleTitle}>{module.title}</Text>
+                  {module.description && (
+                    <Text style={styles.moduleDescription}>{module.description}</Text>
+                  )}
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="gray" />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -106,9 +240,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#EEE',
   },
+  headerSpacer: {
+    width: 28, // Same width as the menu icon to balance the layout
+  },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
+    textAlign: 'center',
+    flex: 1,
   },
   section: {
     marginVertical: 15,
@@ -188,5 +327,151 @@ const styles = StyleSheet.create({
   musicButtonText: {
     color: 'white',
     marginLeft: 8,
+  },
+  // New styles for favorited chapters
+  chapterItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 12,
+    marginBottom: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  chapterImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    marginRight: 16,
+  },
+  chapterTextContainer: {
+    flex: 1,
+  },
+  chapterTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  chapterSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 8,
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  progressBar: {
+    flex: 1,
+    height: 4,
+    backgroundColor: '#E8E8E8',
+    borderRadius: 2,
+    marginRight: 8,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#6B8E23',
+    borderRadius: 2,
+  },
+  progressText: {
+    fontSize: 12,
+    color: '#666',
+    minWidth: 60,
+  },
+  loadingText: {
+    textAlign: 'center',
+    color: '#666',
+    fontSize: 16,
+    padding: 20,
+  },
+  emptyState: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  emptyStateText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#999',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  // Modal styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FBF9F4',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    flex: 1,
+  },
+  closeButton: {
+    padding: 8,
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  moduleItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'white',
+    borderRadius: 12,
+    marginBottom: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  moduleNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#6B8E23',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+  },
+  moduleNumberText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  moduleContent: {
+    flex: 1,
+  },
+  moduleTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  moduleDescription: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
   },
 });

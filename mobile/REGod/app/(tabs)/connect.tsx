@@ -46,6 +46,7 @@ export default function ConnectScreen() {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
+        <View style={styles.headerSpacer} />
         <Text style={styles.headerTitle}>Connect</Text>
         <TouchableOpacity>
           <Ionicons name="menu" size={28} color="black" />
@@ -75,9 +76,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#EEE',
   },
+  headerSpacer: {
+    width: 28, // Same width as the menu icon to balance the layout
+  },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
+    textAlign: 'center',
+    flex: 1,
   },
   conversationItem: {
     flexDirection: 'row',

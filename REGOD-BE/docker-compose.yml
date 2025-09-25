@@ -15,12 +15,15 @@ services:
     env_file:
       - .env
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - .:/app
       - /app/regod-env  # Exclude virtual env from volume
     command: uvicorn main:app --host 0.0.0.0 --port 4000 --reload
+    restart: unless-stopped
 
   db:
     image: postgres:15
@@ -37,6 +40,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
   redis:
     image: redis:7-alpine

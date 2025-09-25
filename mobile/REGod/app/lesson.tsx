@@ -3,8 +3,8 @@ import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ActivityIn
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import ApiService, { type Module } from './services/api';
-import { useAuth } from './contexts/AuthContext';
+import ApiService, { type Module } from '../src/services/api';
+import { useAuth } from '../src/contexts/AuthContext';
 
 export default function LessonScreen() {
   const { moduleId, courseId } = useLocalSearchParams<{ moduleId: string; courseId?: string }>();

@@ -21,9 +21,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useSignIn, useSignUp, isClerkAPIResponseError } from '@clerk/clerk-expo';
-import { useAuth } from './contexts/AuthContext';
+import { useAuth } from '../src/contexts/AuthContext';
 import Logo from '../assets/images/logo.png';
-import ApiService from './services/api';
+import ApiService from '../src/services/api';
 import GoogleLogo from '../components/GoogleLogo';
 
 const { width, height } = Dimensions.get('window');

@@ -109,9 +109,20 @@ interface Course {
   created_by: string;
 }
 
+interface Chapter {
+  id: number;
+  course_id: number;
+  title: string;
+  cover_image_url?: string;
+  order: number;
+  is_active: boolean;
+  quiz?: any;
+}
+
 interface Module {
   id: number;
   course_id: number;
+  chapter_id?: number;
   title: string;
   description?: string;
   content?: string;
@@ -190,20 +201,72 @@ class ApiService {
     return await ApiBaseUrlResolver.ensure();
   }
   private static async getAuthHeaders(): Promise<Record<string, string>> {
-    // Use backend JWT token for now (from clerk exchange)
-    const token = await AsyncStorage.getItem('regod_access_token');
+    // Try access token first, fallback to Clerk session token
+    let token = await AsyncStorage.getItem('regod_access_token');
     
+    if (!token) {
+      token = await AsyncStorage.getItem('clerk_session_token');
+    }
+
     return {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
     };
   }
 
+
+
+
+  // Wrapper function to make authenticated requests with automatic token refresh
+  static async makeAuthenticatedRequest<T>(
+    url: string,
+    options: RequestInit = {},
+    retryCount = 0
+  ): Promise<T> {
+    const headers = await this.getAuthHeaders();
+    const response = await fetch(`${await this.base()}${url}`, {
+      ...options,
+      headers: {
+        ...options.headers,
+        ...headers,
+      },
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      // Handle authentication errors with token refresh
+      if ((response.status === 401 || response.status === 403) && retryCount === 0) {
+        console.log('Token expired, attempting refresh...');
+        try {
+          const refreshed = await this.refreshTokenIfNeeded();
+          if (refreshed) {
+            console.log('Token refreshed, retrying request...');
+            return this.makeAuthenticatedRequest<T>(url, options, 1);
+          }
+        } catch (refreshError) {
+          console.error('Token refresh failed:', refreshError);
+        }
+        
+        // If refresh failed or no refresh token available, clear tokens
+        await this.clearTokens();
+        throw new Error('Authentication expired. Please login again.');
+      }
+
+      // Handle other errors
+      const errorMessage = data.error?.message || data.detail || data.message || `Request failed with status ${response.status}`;
+      throw new Error(errorMessage);
+    }
+
+    return data;
+  }
+
   private static async handleResponse(response: Response) {
     const data = await response.json();
-    
+
     if (!response.ok) {
       const errorMessage = data.error?.message || data.message || `Request failed with status ${response.status}`;
+
       console.error('API Error:', {
         status: response.status,
         statusText: response.statusText,
@@ -211,7 +274,7 @@ class ApiService {
       });
       throw new Error(errorMessage);
     }
-    
+
     return data;
   }
 
@@ -250,6 +313,18 @@ class ApiService {
     });
     
     const data = await this.handleResponse(response);
+
+    // Persist user for immediate UI usage if present
+    if (data && data.id) {
+      const normalizedUser: User = {
+        id: String(data.id),
+        email: data.email ?? '',
+        name: data.name ?? '',
+        role: Array.isArray(data.roles) && data.roles.length ? data.roles[0] : (data.role ?? 'student'),
+        verified: data.is_verified ?? data.verified ?? false,
+      };
+      try { await AsyncStorage.setItem('regod_user_data', JSON.stringify(normalizedUser)); } catch {}
+    }
     
     // Store tokens
     await AsyncStorage.setItem('regod_access_token', data.auth_token);
@@ -291,11 +366,7 @@ class ApiService {
 
   // User endpoints
   static async getDashboard() {
-    const response = await fetch(`${await this.base()}/user/dashboard`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    const raw = await this.handleResponse(response);
+    const raw = await this.makeAuthenticatedRequest<any>('/user/dashboard');
     // Normalize backend shapes (main.py vs ORM router)
     const normalizeCourse = (c: any) => ({
       course_id: c.course_id ?? c.id,
@@ -305,11 +376,22 @@ class ApiService {
       category: c.category ?? 'General',
       difficulty: c.difficulty ?? 'Beginner',
       progress_percentage: c.progress_percentage ?? 0,
+      overall_progress_percentage: c.overall_progress_percentage ?? c.progress_percentage ?? 0,
       is_new: c.is_new ?? false,
       is_continue_available: c.is_continue_available ?? (c.progress_percentage ? c.progress_percentage > 0 : false),
     });
+    const normalizedUser = (() => {
+      const u = raw.user || {};
+      return {
+        id: u.id ?? '',
+        email: u.email ?? '',
+        name: u.name ?? '',
+        role: Array.isArray(u.roles) && u.roles.length ? u.roles[0] : (u.role ?? 'student'),
+        verified: u.is_verified ?? u.verified ?? false,
+      } as User;
+    })();
     const normalized = {
-      user: raw.user || {},
+      user: normalizedUser,
       last_visited_course: raw.last_visited_course
         ? {
             course_id: raw.last_visited_course.course_id,
@@ -328,12 +410,7 @@ class ApiService {
   }
 
   static async getProfile() {
-    const response = await fetch(`${await this.base()}/user/profile`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    
-    return this.handleResponse(response);
+    return this.makeAuthenticatedRequest<any>('/user/profile');
   }
 
   // Social auth
@@ -360,81 +437,108 @@ class ApiService {
 
   // Course endpoints
   static async getCourses(): Promise<Course[]> {
-    const response = await fetch(`${await this.base()}/courses`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    
-    return this.handleResponse(response);
+    return this.makeAuthenticatedRequest<Course[]>('/courses');
   }
 
   static async getCourseModules(courseId: number): Promise<Module[]> {
-    const response = await fetch(`${await this.base()}/courses/${courseId}/modules`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    
-    return this.handleResponse(response);
+    return this.makeAuthenticatedRequest<Module[]>(`/courses/${courseId}/modules`);
   }
 
-  static async updateCourseProgress(courseId: number, progressPercentage: number, lastVisitedModuleId?: number) {
-    // Only update progress if we have a valid module ID
-    if (!lastVisitedModuleId) {
-      console.log('No module ID provided, skipping progress update');
-      return { success: true, updated_progress_percentage: 0 };
+  static async getCourseChapters(courseId: number): Promise<Chapter[]> {
+    return this.makeAuthenticatedRequest<Chapter[]>(`/courses/${courseId}/chapters`);
+  }
+
+  static async getChapterProgress(courseId: number): Promise<{
+    course_id: number;
+    chapters: Array<{
+      chapter_id: number;
+      chapter_title: string;
+      cover_image_url?: string;
+      order: number;
+      total_modules: number;
+      completed_modules: number;
+      progress_percentage: number;
+      is_completed: boolean;
+      next_module?: {
+        id: number;
+        title: string;
+        description?: string;
+        header_image_url?: string;
+      };
+    }>;
+  }> {
+    return this.makeAuthenticatedRequest(`/courses/${courseId}/chapter-progress`);
+  }
+
+  static async updateCourseProgress(courseId: number, progressPercentage: number | null, lastVisitedModuleId?: number, status: 'visited' | 'completed' = 'visited') {
+    // Always try to update progress, even without module ID for overall progress
+    const requestBody: any = {
+      course_id: String(courseId),
+      module_id: lastVisitedModuleId ? String(lastVisitedModuleId) : null,
+      status,
+    };
+    
+    // Only include progress_percentage if provided (let backend calculate if null)
+    if (progressPercentage !== null) {
+      requestBody.progress_percentage = progressPercentage;
     }
     
-    const response = await fetch(`${await this.base()}/learn/progress`, {
+    return this.makeAuthenticatedRequest('/learn/progress', {
       method: 'POST',
-      headers: await this.getAuthHeaders(),
-      // Align with backend main.py ProgressRequest (course_id, module_id, status)
+      body: JSON.stringify(requestBody),
+    });
+  }
+
+  // New endpoint for marking lessons as completed with responses
+  static async completeLesson(courseId: number, moduleId: number, responses: any[]) {
+    return this.makeAuthenticatedRequest('/learn/complete-lesson', {
+      method: 'POST',
       body: JSON.stringify({
         course_id: String(courseId),
-        module_id: String(lastVisitedModuleId),
-        status: 'visited',
+        module_id: String(moduleId),
+        responses,
+        completed_at: new Date().toISOString(),
       }),
     });
-    
-    return this.handleResponse(response);
   }
 
   // Notes endpoints
   static async getNotes(): Promise<Note[]> {
-    const response = await fetch(`${await this.base()}/user/notes`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    const data = await this.handleResponse(response);
-    // Backend returns { notes: [{ note_content, course_title, created_at }] }
-    const notes = (data.notes || []) as any[];
-    return notes.map((n, idx) => ({
-      id: Number(new Date(n.created_at).getTime() || idx),
-      user_id: '',
-      course_id: 0,
-      lesson_id: 0,
-      note_content: n.note_content,
-      created_at: n.created_at,
-      updated_at: n.created_at,
-      course_title: n.course_title || 'General',
-      lesson_title: n.course_title || 'Note',
-    }));
+    try {
+      const data = await this.makeAuthenticatedRequest<any>('/user/notes');
+      // Backend returns { notes: [{ note_content, course_title, created_at }] }
+      const notes = (data.notes || []) as any[];
+      return notes.map((n, idx) => ({
+        id: Number(new Date(n.created_at).getTime() || idx),
+        user_id: '',
+        course_id: 0,
+        lesson_id: 0,
+        note_content: n.note_content,
+        created_at: n.created_at,
+        updated_at: n.created_at,
+        course_title: n.course_title || 'General',
+        lesson_title: n.course_title || 'Note',
+      }));
+    } catch (error) {
+      console.error('Error fetching notes:', error);
+      return []; // Return empty array on error
+    }
   }
 
   static async createNote(courseId: number, lessonId: number, content: string): Promise<Note> {
-    const response = await fetch(`${await this.base()}/user/notes`, {
-      method: 'POST',
-      headers: await this.getAuthHeaders(),
-      body: JSON.stringify({
-        course_id: courseId,
-        lesson_id: lessonId,
-        note_content: content,
-      }),
-    });
-    // If backend not implemented, synthesize local note
     try {
-      const data = await this.handleResponse(response);
-      return data as Note;
-    } catch {
+      const data = await this.makeAuthenticatedRequest<Note>('/user/notes', {
+        method: 'POST',
+        body: JSON.stringify({
+          course_id: courseId,
+          lesson_id: lessonId,
+          note_content: content,
+        }),
+      });
+      return data;
+    } catch (error) {
+      console.error('Error creating note:', error);
+      // If backend not implemented, synthesize local note
       const now = new Date().toISOString();
       return {
         id: Number(new Date(now).getTime()),
@@ -451,19 +555,18 @@ class ApiService {
   }
 
   static async updateNote(noteId: number, courseId: number, lessonId: number, content: string): Promise<Note> {
-    const response = await fetch(`${await this.base()}/user/notes/${noteId}`, {
-      method: 'PUT',
-      headers: await this.getAuthHeaders(),
-      body: JSON.stringify({
-        course_id: courseId,
-        lesson_id: lessonId,
-        note_content: content,
-      }),
-    });
     try {
-      const data = await this.handleResponse(response);
-      return data as Note;
-    } catch {
+      const data = await this.makeAuthenticatedRequest<Note>(`/user/notes/${noteId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          course_id: courseId,
+          lesson_id: lessonId,
+          note_content: content,
+        }),
+      });
+      return data;
+    } catch (error) {
+      console.error('Error updating note:', error);
       const now = new Date().toISOString();
       return {
         id: noteId,
@@ -480,13 +583,12 @@ class ApiService {
   }
 
   static async deleteNote(noteId: number) {
-    const response = await fetch(`${await this.base()}/user/notes/${noteId}`, {
-      method: 'DELETE',
-      headers: await this.getAuthHeaders(),
-    });
     try {
-      return await this.handleResponse(response);
-    } catch {
+      return await this.makeAuthenticatedRequest(`/user/notes/${noteId}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.error('Error deleting note:', error);
       // Fallback: treat as deleted locally
       return { success: true };
     }
@@ -496,25 +598,19 @@ class ApiService {
   static async sendChatMessage(message: string): Promise<ChatResponse> {
     // Ensure a thread exists and get its id
     const thread = await this.getOrCreateThread();
-    const response = await fetch(`${await this.base()}/connect/thread/messages`, {
+    const data = await this.makeAuthenticatedRequest<any>('/connect/thread/messages', {
       method: 'POST',
-      headers: await this.getAuthHeaders(),
       body: JSON.stringify({
         thread_id: thread.thread_id,
         content: message,
       }),
     });
-    const data = await this.handleResponse(response);
     return { message: data.message || data.content } as ChatResponse;
   }
 
   static async getChatHistory(): Promise<Message[]> {
     const thread = await this.getOrCreateThread();
-    const response = await fetch(`${await this.base()}/connect/thread/messages?thread_id=${encodeURIComponent(thread.thread_id)}`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    const data = await this.handleResponse(response);
+    const data = await this.makeAuthenticatedRequest<any>(`/connect/thread/messages?thread_id=${encodeURIComponent(thread.thread_id)}`);
     const list = (data.messages || []) as any[];
     return list.map((msg, idx) => ({
       id: String(idx),
@@ -525,77 +621,77 @@ class ApiService {
   }
 
   private static async getOrCreateThread(): Promise<{ thread_id: string; recipient_name?: string; unread_count?: number }> {
-    const res = await fetch(`${await this.base()}/connect/thread`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    return this.handleResponse(res);
+    return this.makeAuthenticatedRequest('/connect/thread');
   }
 
   // Favourites endpoints (spelling per backend)
   static async getFavorites(): Promise<any[]> {
-    const response = await fetch(`${await this.base()}/user/favourites`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    return this.handleResponse(response);
+    return this.makeAuthenticatedRequest<any[]>('/user/favourites');
   }
 
   static async toggleFavorite(lessonId: number) {
-    const response = await fetch(`${await this.base()}/user/favourites/${lessonId}`, {
+    return this.makeAuthenticatedRequest(`/user/favourites/${lessonId}`, {
       method: 'POST',
-      headers: await this.getAuthHeaders(),
     });
-    return this.handleResponse(response);
   }
 
   static async removeFromFavorites(favoriteId: number) {
-    const response = await fetch(`${await this.base()}/user/favourites/${favoriteId}`, {
+    return this.makeAuthenticatedRequest(`/user/favourites/${favoriteId}`, {
       method: 'DELETE',
-      headers: await this.getAuthHeaders(),
     });
-    return this.handleResponse(response);
   }
 
   // Profile endpoints
   static async updateProfile(updateData: Partial<User>) {
-    const response = await fetch(`${await this.base()}/user/profile`, {
+    return this.makeAuthenticatedRequest('/user/profile', {
       method: 'PUT',
-      headers: await this.getAuthHeaders(),
       body: JSON.stringify(updateData),
     });
-    
-    return this.handleResponse(response);
   }
 
   // Admin endpoints (if user is admin)
   static async getAdminStats() {
-    const response = await fetch(`${await this.base()}/admin/stats`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    
-    return this.handleResponse(response);
+    return this.makeAuthenticatedRequest('/admin/stats');
   }
 
   static async getTeachersDirectory() {
-    const response = await fetch(`${await this.base()}/admin/teachers`, {
-      method: 'GET',
-      headers: await this.getAuthHeaders(),
-    });
-    
-    return this.handleResponse(response);
+    return this.makeAuthenticatedRequest('/admin/teachers');
   }
 
   // Teacher code endpoints
-  static async useTeacherCode(code: string) {
-    const response = await fetch(`${await this.base()}/use-teacher-code`, {
+  static async useTeacherCode(code: string): Promise<{ success: boolean; message: string; teacher_name?: string }> {
+    return this.makeAuthenticatedRequest('/use-teacher-code', {
       method: 'POST',
-      headers: await this.getAuthHeaders(),
       body: JSON.stringify({ code }),
     });
-    
-    return this.handleResponse(response);
+  }
+
+  // Favorites endpoints
+  static async toggleChapterFavorite(chapterId: number): Promise<{ action: string; chapter_id: number }> {
+    return this.makeAuthenticatedRequest(`/user/chapter-favourites/${chapterId}`, {
+      method: 'POST',
+    });
+  }
+
+  static async getChapterFavorites(): Promise<Array<{
+    id: number;
+    user_id: string;
+    chapter_id: number;
+    created_at: string;
+    chapter_title: string;
+    course_title: string;
+    cover_image_url?: string;
+    progress_percentage: number;
+    completed_modules: number;
+    total_modules: number;
+  }>> {
+    return this.makeAuthenticatedRequest('/user/chapter-favourites');
+  }
+
+  static async deleteChapterFavorite(favoriteId: number): Promise<{ message: string }> {
+    return this.makeAuthenticatedRequest(`/user/chapter-favourites/${favoriteId}`, {
+      method: 'DELETE',
+    });
   }
 
   // Utility methods
@@ -621,14 +717,123 @@ class ApiService {
   }
 
   static async clearTokens() {
+    console.log('Clearing all stored tokens');
     await AsyncStorage.removeItem('regod_access_token');
     await AsyncStorage.removeItem('regod_refresh_token');
+    await AsyncStorage.removeItem('regod_user_data');
+    await AsyncStorage.removeItem('clerk_session_token');
+  }
+
+  static async setClerkToken(token: string): Promise<void> {
+    await AsyncStorage.setItem('clerk_session_token', token);
+  }
+
+  static isTokenExpiringSoon(token: string, minutesAhead: number = 5): boolean {
+    try {
+      // For Clerk session tokens, we can't decode them, so we'll assume they're valid
+      // This method is mainly for backward compatibility
+      return false;
+    } catch (error) {
+      console.error('Error checking token expiry:', error);
+      return true;
+    }
+  }
+
+
+  static async refreshTokenIfNeeded(): Promise<string | null> {
+    try {
+      const refreshToken = await AsyncStorage.getItem('regod_refresh_token');
+      if (!refreshToken) {
+        console.log('No refresh token available');
+        return null;
+      }
+
+      const response = await fetch(`${await this.base()}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+
+      if (!response.ok) {
+        console.error('Token refresh failed:', response.status);
+        return null;
+      }
+
+      const data = await response.json();
+      
+      // Store new tokens
+      await AsyncStorage.setItem('regod_access_token', data.auth_token);
+      await AsyncStorage.setItem('regod_refresh_token', data.refresh_token);
+      
+      // Update user data if provided
+      if (data.user_data) {
+        await AsyncStorage.setItem('regod_user_data', JSON.stringify(data.user_data));
+      }
+      
+      console.log('Token refreshed successfully');
+      return data.auth_token;
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      return null;
+    }
+  }
+
+  static async debugJWTToken(token: string): Promise<any> {
+    try {
+      const response = await fetch(`${await this.base()}/auth/debug-jwt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ token }),
+      });
+
+      const result = await response.json();
+      console.log('JWT Debug result:', result);
+      return result;
+    } catch (error) {
+      console.error('JWT Debug failed:', error);
+      return { error: 'Debug failed', success: false };
+    }
+  }
+
+  static async isAuthenticated(): Promise<boolean> {
+    try {
+      // Check for access token first
+      let token = await AsyncStorage.getItem('regod_access_token');
+      
+      if (token) {
+        return true;
+      }
+      
+      // Fallback to refresh token
+      token = await AsyncStorage.getItem('regod_refresh_token');
+      if (token) {
+        // Try to refresh the access token
+        const newToken = await this.refreshTokenIfNeeded();
+        return !!newToken;
+      }
+      
+      // Fallback to Clerk session token for backward compatibility
+      token = await AsyncStorage.getItem('clerk_session_token');
+      return !!token;
+    } catch (error) {
+      console.error('Error checking authentication:', error);
+      return false;
+    }
   }
 
   static async getStoredToken(): Promise<string | null> {
-    return await AsyncStorage.getItem('regod_access_token');
+    // Try access token first
+    let token = await AsyncStorage.getItem('regod_access_token');
+    if (token) return token;
+    
+    // Fallback to Clerk session token
+    return await AsyncStorage.getItem('clerk_session_token');
   }
 }
 
 export default ApiService;
-export type { User, Course, Module, Note, DashboardResponse, Message, ChatResponse };
+export type { User, Course, Chapter, Module, Note, DashboardResponse, Message, ChatResponse };

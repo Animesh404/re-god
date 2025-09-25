@@ -3,7 +3,7 @@ import { View, StyleSheet, TextInput, KeyboardAvoidingView, Platform, TouchableO
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import ApiService from './services/api';
+import ApiService from '../src/services/api';
 
 export default function NewNoteScreen() {
   const { noteId } = useLocalSearchParams<{ noteId?: string }>();

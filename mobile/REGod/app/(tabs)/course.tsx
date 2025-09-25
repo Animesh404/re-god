@@ -1,11 +1,27 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ImageSourcePropType, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ImageSourcePropType, ActivityIndicator, Modal, FlatList, Dimensions, Animated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import CircularProgress from '@/components/ui/CircularProgress';
-import ApiService, { type Course, type Module, type DashboardResponse } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import ApiService, { type Course, type Chapter, type Module, type DashboardResponse } from '../../src/services/api';
+import { useAuth } from '../../src/contexts/AuthContext';
+
+const { width: screenWidth } = Dimensions.get('window');
+
+// Interface for dashboard course data (different from Course interface)
+interface DashboardCourse {
+  course_id: number;
+  course_title: string;
+  description: string;
+  thumbnail_url?: string;
+  category: string;
+  difficulty: string;
+  progress_percentage: number;
+  is_new: boolean;
+  is_continue_available: boolean;
+  overall_progress_percentage: number;
+}
 
 // Helper function to convert relative URLs to full URLs
 const getImageUrl = (imageUrl: string | null): any => {
@@ -18,77 +34,337 @@ const getImageUrl = (imageUrl: string | null): any => {
 const defaultCourseImage = require('@/assets/images/Course Title Photo - The God You Can Love-toni-minikus.jpg');
 const defaultChapterImage = require('@/assets/images/Best Teacher-toni-minikus.jpg');
 
+// Types for lesson completion tracking
+interface LessonProgress {
+  moduleId: number;
+  completed: boolean;
+  quizCompleted?: boolean;
+  reflectionCompleted?: boolean;
+  lastAccessedAt: string;
+}
+
+interface LessonIndexModalProps {
+  visible: boolean;
+  onClose: () => void;
+  modules: Module[];
+  courseTitle: string;
+  onLessonPress: (module: Module) => void;
+  completedLessons: Set<number>;
+}
+
+interface ChapterCardProps {
+  chapter: Chapter;
+  onPress: () => void;
+}
+
+// Lesson Index Modal Component
+function LessonIndexModal({
+  visible,
+  onClose,
+  modules,
+  courseTitle,
+  onLessonPress,
+  completedLessons
+}: LessonIndexModalProps) {
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={modalStyles.container}>
+        <View style={modalStyles.header}>
+          <Text style={modalStyles.headerTitle}>{courseTitle}</Text>
+          <TouchableOpacity onPress={onClose} style={modalStyles.closeButton}>
+            <Ionicons name="close" size={24} color="black" />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={modalStyles.content}>
+          <Text style={modalStyles.sectionTitle}>Lesson Index</Text>
+          {modules.map((module, index) => {
+            const isCompleted = completedLessons.has(module.id);
+            const isLocked = index > 0 && !completedLessons.has(modules[index - 1]?.id);
+
+            return (
+              <TouchableOpacity
+                key={module.id}
+                style={[
+                  modalStyles.lessonItem,
+                  isCompleted && modalStyles.completedLesson,
+                  isLocked && modalStyles.lockedLesson
+                ]}
+                onPress={() => !isLocked && onLessonPress(module)}
+                disabled={isLocked}
+              >
+                <View style={modalStyles.lessonContent}>
+                  <View style={modalStyles.lessonHeader}>
+                    <Text style={modalStyles.lessonNumber}>{index + 1}</Text>
+                    {isLocked && <Ionicons name="lock-closed" size={16} color="gray" />}
+                    {isCompleted && <Ionicons name="checkmark-circle" size={16} color="#6B8E23" />}
+                  </View>
+                  <Text style={[
+                    modalStyles.lessonTitle,
+                    isLocked && modalStyles.lockedText
+                  ]}>
+                    {module.title}
+                  </Text>
+                  {module.description && (
+                    <Text style={[
+                      modalStyles.lessonDescription,
+                      isLocked && modalStyles.lockedText
+                    ]}>
+                      {module.description}
+                    </Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 export default function CourseScreen() {
   const router = useRouter();
-  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { isAuthenticated, loading: authLoading, user } = useAuth();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [modules, setModules] = useState<Module[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [chapterProgress, setChapterProgress] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showLessonModal, setShowLessonModal] = useState(false);
+  const [completedLessons, setCompletedLessons] = useState<Set<number>>(new Set());
+  const [favoritedChapters, setFavoritedChapters] = useState<Set<number>>(new Set());
+  const [currentCourseTitle, setCurrentCourseTitle] = useState<string>('');
+  const [currentCourseIndex, setCurrentCourseIndex] = useState(0);
+
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ item: DashboardCourse, index: number | null }> }) => {
+    if (viewableItems.length > 0 && viewableItems[0].index !== null) {
+      setCurrentCourseIndex(viewableItems[0].index);
+    }
+  }).current;
 
   useEffect(() => {
-    if (isAuthenticated && !authLoading) {
+    // Only load dashboard if user is authenticated and auth loading is complete
+    if (isAuthenticated && !authLoading && user) {
       loadDashboard();
+      loadFavoritedChapters();
     }
-  }, [isAuthenticated, authLoading]);
+  }, [isAuthenticated, authLoading, user]);
+
+  const loadFavoritedChapters = async () => {
+    try {
+      const favoritedChaptersData = await ApiService.getChapterFavorites();
+      const chapterIds = new Set(favoritedChaptersData.map(ch => ch.chapter_id));
+      setFavoritedChapters(chapterIds);
+    } catch (error) {
+      console.error('Error loading favorited chapters:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (dashboard && dashboard.available_courses.length > 0) {
+      const currentCourse = dashboard.available_courses[currentCourseIndex];
+      if (currentCourse) {
+        handleCoursePress(currentCourse.course_id);
+      }
+    }
+  }, [currentCourseIndex, dashboard]);
 
   const loadDashboard = async () => {
     try {
       setLoading(true);
+      setError(null);
+
+      // Double-check authentication before making API call
+      const hasValidToken = await ApiService.getStoredToken();
+      if (!hasValidToken) {
+        console.log('No valid token found, skipping dashboard load');
+        setLoading(false);
+        return;
+      }
+
       const dashboardData = await ApiService.getDashboard();
       setDashboard(dashboardData);
-      
-      // Load modules for the first course that has modules
-      if (dashboardData.available_courses.length > 0) {
-        // Find a course that has modules (prefer course 4 "The God You Can Love")
-        const courseWithModules = dashboardData.available_courses.find((course: any) => course.course_id === 4) || 
-                                 dashboardData.available_courses.find((course: any) => course.course_id === 3) ||
-                                 dashboardData.available_courses[0];
-        
-        if (courseWithModules) {
-          try {
-            const courseModules = await ApiService.getCourseModules(courseWithModules.course_id);
-            setModules(courseModules);
-          } catch (moduleError) {
-            console.log('No modules found for course', courseWithModules.course_id);
-            setModules([]);
-          }
+
+      // Set the initial course index based on the last visited course
+      if (dashboardData.last_visited_course && dashboardData.available_courses) {
+        const initialIndex = dashboardData.available_courses.findIndex(
+          (course: DashboardCourse) => course.course_id === dashboardData.last_visited_course?.course_id
+        );
+        if (initialIndex !== -1) {
+          setCurrentCourseIndex(initialIndex);
         }
       }
+
+      // No need to fetch modules/chapters here, the new useEffect will handle it
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load dashboard';
       console.error('Error loading dashboard:', err);
+
+      // If it's an authentication error, don't show error to user
+      if (errorMessage.includes('Authentication expired') || errorMessage.includes('403')) {
+        console.log('Authentication error in dashboard, will retry when auth is ready');
+        setError(null);
+      } else {
+        setError(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const loadLessonProgress = async (courseId: number) => {
+    try {
+      // Load user progress data - this would come from API in production
+      const progressData = await ApiService.getDashboard(); // This contains progress info
+      const completedSet = new Set<number>();
+
+      // For now, we'll use the progress percentage to estimate completed lessons
+      // In production, this would come from a dedicated progress API
+      if (progressData.last_visited_course?.overall_progress_percentage) {
+        const totalModules = modules.length;
+        const completedCount = Math.floor((progressData.last_visited_course.overall_progress_percentage / 100) * totalModules);
+
+        for (let i = 0; i < Math.min(completedCount, modules.length); i++) {
+          completedSet.add(modules[i].id);
+        }
+      }
+
+      setCompletedLessons(completedSet);
+    } catch (error) {
+      console.error('Error loading lesson progress:', error);
+      // Continue without progress data
+    }
+  };
+
   const handleCoursePress = async (courseId: number) => {
     try {
-      const courseModules = await ApiService.getCourseModules(courseId);
+      // Load chapters, modules, and chapter progress for the selected course
+      const [courseChapters, courseModules, progressData] = await Promise.all([
+        ApiService.getCourseChapters(courseId),
+        ApiService.getCourseModules(courseId),
+        ApiService.getChapterProgress(courseId)
+      ]);
+      
+      setChapters(courseChapters);
       setModules(courseModules);
+      setChapterProgress(progressData.chapters);
+      
+      const course = dashboard?.available_courses.find(c => c.course_id === courseId);
+      setCurrentCourseTitle(course?.course_title || `Course ${courseId}`);
+
+      // Load lesson progress for this course
+      await loadLessonProgress(courseId);
     } catch (err) {
-      console.error('Error loading course modules:', err);
+      console.error('Error loading course chapters/modules:', err);
     }
   };
 
   const handleModulePress = async (module: Module) => {
     try {
-      // Update progress when user accesses a module
-      await ApiService.updateCourseProgress(module.course_id, 0, module.id);
+      console.log('handleModulePress called with module:', { id: module.id, title: module.title, course_id: module.course_id });
+      
+      // Record that user accessed this module
+      await ApiService.updateCourseProgress(module.course_id, 0, module.id, 'visited');
+
+      // Navigate to lesson - progress will be updated on completion
+      router.push({
+        pathname: '/(tabs)/lesson' as any,
+        params: {
+          moduleId: module.id.toString(),
+          courseId: module.course_id.toString()
+        }
+      });
     } catch (err) {
-      console.error('Error updating progress:', err);
-      // Continue even if progress update fails
+      console.error('Error accessing lesson:', err);
+      // Still allow navigation even if progress update fails
+      router.push({
+        pathname: '/(tabs)/lesson' as any,
+        params: {
+          moduleId: module.id.toString(),
+          courseId: module.course_id.toString()
+        }
+      });
     }
+  };
+
+  const handleLessonCompleted = (moduleId: number) => {
+    setCompletedLessons(prev => new Set([...prev, moduleId]));
+  };
+
+  const toggleChapterFavorite = async (chapterId: number, event: any) => {
+    event.stopPropagation(); // Prevent triggering the chapter card press
     
-    // Navigate to lesson
-    router.push({ 
-      pathname: '/(tabs)/lesson' as any, 
-      params: { 
-        moduleId: module.id.toString(),
-        courseId: module.course_id.toString()
-      } 
-    });
+    try {
+      const response = await ApiService.toggleChapterFavorite(chapterId);
+      
+      if (response.action === 'added') {
+        setFavoritedChapters(prev => new Set([...prev, chapterId]));
+        console.log('Added chapter to favorites:', chapterId);
+      } else if (response.action === 'removed') {
+        setFavoritedChapters(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(chapterId);
+          return newSet;
+        });
+        console.log('Removed chapter from favorites:', chapterId);
+      }
+    } catch (error) {
+      console.error('Error toggling chapter favorite:', error);
+    }
+  };
+
+  // Animated Heart Component
+  const AnimatedHeart = ({ chapterId }: { chapterId: number }) => {
+    const scaleAnim = useRef(new Animated.Value(1)).current;
+    const isFavorited = favoritedChapters.has(chapterId);
+
+    const handlePress = (event: any) => {
+      // Animate the heart
+      Animated.sequence([
+        Animated.timing(scaleAnim, {
+          toValue: 1.3,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      toggleChapterFavorite(chapterId, event);
+    };
+
+    return (
+      <TouchableOpacity
+        style={styles.heartIcon}
+        onPress={handlePress}
+      >
+        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+          <Ionicons
+            name={isFavorited ? "heart" : "heart-outline"}
+            size={24}
+            color={isFavorited ? "#FF6B6B" : "rgba(255, 255, 255, 0.8)"}
+          />
+        </Animated.View>
+      </TouchableOpacity>
+    );
+  };
+
+  const openLessonModal = () => {
+    setShowLessonModal(true);
+  };
+
+  const closeLessonModal = () => {
+    setShowLessonModal(false);
   };
 
   if (authLoading || loading) {
@@ -104,15 +380,18 @@ export default function CourseScreen() {
     );
   }
 
-  if (!isAuthenticated) {
+  // Don't render anything if user is not authenticated and auth is still loading
+  if (!isAuthenticated && !user) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#6B8E23" />
           <Text style={styles.loadingText}>Please log in to view courses</Text>
         </View>
       </SafeAreaView>
     );
   }
+
 
   if (error) {
     return (
@@ -128,98 +407,250 @@ export default function CourseScreen() {
   }
 
   // Use API data
-  const currentCourse = dashboard?.last_visited_course;
   const availableCourses = dashboard?.available_courses || [];
-  
+
+  const renderCourseCard = ({ item: course }: { item: DashboardCourse }) => (
+    <View style={styles.courseCard}>
+      <Image
+        source={course.thumbnail_url ? { uri: course.thumbnail_url } : defaultCourseImage}
+        style={styles.courseImage}
+      />
+      <Text style={styles.courseTitle}>{course.course_title}</Text>
+      {/* Progress Circle */}
+      <View style={styles.progressContainer}>
+        <CircularProgress
+          size={90}
+          strokeWidth={8}
+          progress={course.overall_progress_percentage}
+          backgroundColor="#E8E8E8"
+          progressColor="#6B8E23"
+        />
+        <View style={styles.progressTextContainer}>
+          <Text style={styles.progressText}>{course.overall_progress_percentage.toFixed(2)}%</Text>
+        </View>
+        <Text style={styles.progressLabel}>Course Progress</Text>
+      </View>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView>
         {/* Header */}
         <View style={styles.header}>
+          <View style={styles.headerSpacer} />
           <Text style={styles.headerTitle}>Course</Text>
           <TouchableOpacity>
             <Ionicons name="menu" size={28} color="black" />
           </TouchableOpacity>
         </View>
 
-        {/* Course Card */}
-        {currentCourse && (
-          <View style={styles.courseCard}>
-            <Image 
-              source={currentCourse.thumbnail_url ? { uri: currentCourse.thumbnail_url } : defaultCourseImage} 
-              style={styles.courseImage} 
-            />
-            <Text style={styles.courseTitle}>{currentCourse.course_title}</Text>
-            {/* Progress Circle */}
-            <View style={styles.progressContainer}>
-              <CircularProgress
-                size={100}
-                strokeWidth={10}
-                progress={currentCourse.overall_progress_percentage}
-                backgroundColor="#E0E0E0"
-                progressColor="#6B8E23"
-              />
-              <View style={styles.progressTextContainer}>
-                <Text style={styles.progressText}>{currentCourse.overall_progress_percentage}%</Text>
-              </View>
-              <Text style={styles.progressLabel}>Course Progress</Text>
-            </View>
-          </View>
+        {/* Course Card Carousel */}
+        {availableCourses.length > 0 && (
+          <FlatList<DashboardCourse>
+            data={availableCourses as DashboardCourse[]}
+            renderItem={renderCourseCard}
+            keyExtractor={(item) => item.course_id.toString()}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={{
+              itemVisiblePercentThreshold: 50,
+            }}
+            style={styles.courseCarousel}
+          />
         )}
 
-        {/* Continue Section */}
+        {/* Continue Section with Green Background */}
         <View style={styles.continueSection}>
           <Text style={styles.continueText}>Continue</Text>
           <Text style={styles.continueSubtitle}>Pick up where you left off</Text>
         </View>
 
-        {/* Available Courses */}
-        <View style={styles.chaptersSection}>
-          <Text style={styles.chaptersTitle}>Available Courses</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {availableCourses.map((course) => (
-              <TouchableOpacity 
-                key={course.course_id}
-                onPress={() => handleCoursePress(course.course_id)}
+        {/* Green Background Container */}
+        <View style={styles.greenBackgroundContainer}>
+          {/* Continue Chapter Card */}
+          {chapterProgress.length > 0 && (
+            <View style={styles.continueCardSection}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.scrollViewContent}
               >
-                <View style={styles.chapterCard}>
-                  <Image 
-                    source={getImageUrl(course.thumbnail_url || null)} 
-                    style={styles.chapterImage} 
-                  />
-                  <View style={styles.chapterTextContainer}>
-                    <Text style={styles.chapterTitle}>{course.course_title}</Text>
-                    <View style={styles.lessonButton}>
-                      <Text style={styles.lessonButtonText}>
-                        {course.is_new ? 'Start Course' : 'Continue'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
+                {/* Show current chapter with module progress */}
+                {(() => {
+                  // Find the current chapter (first incomplete or last chapter)
+                  const currentChapter = chapterProgress.find(ch => !ch.is_completed) || chapterProgress[chapterProgress.length - 1];
+                  
+                  // If no chapter progress data, try to show continue card from dashboard data
+                  if (!currentChapter && dashboard?.last_visited_course) {
+                    const currentCourse = dashboard?.available_courses[currentCourseIndex];
+                    const lastVisitedModule = (dashboard?.last_visited_course?.course_id === currentCourse?.course_id) 
+                      ? dashboard?.last_visited_course?.last_visited_module_id 
+                      : null;
+                    
+                    if (lastVisitedModule) {
+                      const targetModule = modules.find(m => m.id === lastVisitedModule);
+                      console.log('Fallback continue card - targetModule:', targetModule);
+                      if (targetModule) {
+                        return (
+                          <TouchableOpacity
+                            onPress={() => handleModulePress(targetModule)}
+                            style={styles.continueCard}
+                          >
+                            <Image
+                              source={getImageUrl(dashboard.last_visited_course.thumbnail_url || null)}
+                              style={styles.continueCardImage}
+                            />
+                            <View style={styles.continueCardOverlay} />
+                            <View style={styles.continueCardContent}>
+                              <View style={styles.continueProgressContainer}>
+                                <CircularProgress
+                                  size={50}
+                                  strokeWidth={4}
+                                  progress={dashboard.last_visited_course.overall_progress_percentage}
+                                  backgroundColor="rgba(255, 255, 255, 0.45)"
+                                  progressColor="#FFFFFF"
+                                />
+                                <Text style={styles.continueProgressText}>
+                                  {dashboard.last_visited_course.overall_progress_percentage.toFixed(2)}%
+                                </Text>
+                              </View>
+                              <Text style={styles.continueCardTitle}>{dashboard.last_visited_course.course_title}</Text>
+                              <Text style={styles.continueCardTitle}>
+                                Continue: {targetModule.title}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      }
+                    }
+                  }
+                  
+                  if (!currentChapter) return null;
 
-        {/* Modules */}
-        {modules.length > 0 && (
-          <View style={styles.chaptersSection}>
-            <Text style={styles.chaptersTitle}>Lessons</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {modules.map((module) => (
-                <TouchableOpacity 
-                  key={module.id}
-                  onPress={() => handleModulePress(module)}
+                  // Get the last visited module from dashboard, but only if it's from the current course
+                  const currentCourse = dashboard?.available_courses[currentCourseIndex];
+                  const lastVisitedModule = (dashboard?.last_visited_course?.course_id === currentCourse?.course_id) 
+                    ? dashboard?.last_visited_course?.last_visited_module_id 
+                    : null;
+                  
+                  console.log('Continue card debug:', {
+                    currentCourseId: currentCourse?.course_id,
+                    lastVisitedCourseId: dashboard?.last_visited_course?.course_id,
+                    lastVisitedModule,
+                    modules: modules.map(m => ({ id: m.id, title: m.title })),
+                    currentChapter: currentChapter?.chapter_title,
+                    nextModule: currentChapter?.next_module,
+                    completedLessons: Array.from(completedLessons),
+                    chapterProgress: chapterProgress.map(ch => ({ 
+                      id: ch.chapter_id, 
+                      title: ch.chapter_title, 
+                      next_module: ch.next_module,
+                      is_completed: ch.is_completed 
+                    }))
+                  });
+                  
+                  const targetModule = lastVisitedModule 
+                    ? modules.find(m => m.id === lastVisitedModule)
+                    : currentChapter.next_module 
+                      ? modules.find(m => m.id === currentChapter.next_module.id)
+                      : modules.find(m => !completedLessons.has(m.id)); // Fallback to first incomplete module
+                  
+                  console.log('Target module:', targetModule);
+
+                  return (
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (targetModule) {
+                          handleModulePress(targetModule);
+                        }
+                      }}
+                      style={styles.continueCard}
+                    >
+                      <Image
+                        source={getImageUrl(currentChapter.cover_image_url || null)}
+                        style={styles.continueCardImage}
+                      />
+                      <View style={styles.continueCardOverlay} />
+                      <View style={styles.continueCardContent}>
+                        <View style={styles.continueProgressContainer}>
+                          <CircularProgress
+                            size={50}
+                            strokeWidth={4}
+                            progress={currentChapter.progress_percentage}
+                            backgroundColor="rgba(255, 255, 255, 0.45)"
+                            progressColor="#FFFFFF"
+                          />
+                          <Text style={styles.continueProgressText}>
+                            {currentChapter.progress_percentage.toFixed(2)}%
+                          </Text>
+                        </View>
+                        <Text style={styles.continueCardTitle}>{currentChapter.chapter_title}</Text>
+                        {/* <Text style={styles.continueCardTitle}>
+                          {currentChapter.completed_modules}/{currentChapter.total_modules} modules completed
+                        </Text> */}
+                        {targetModule && (
+                          <Text style={styles.continueCardTitle}>
+                            {lastVisitedModule ? 'Continue: ' : currentChapter.next_module ? 'Next: ' : 'Start: '}{targetModule.title}
+                          </Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })()}
+              </ScrollView>
+
+              {/* Lesson Index under the continue card */}
+              {/* <TouchableOpacity style={styles.lessonIndexButton} onPress={openLessonModal}>
+                <Text style={styles.lessonIndexButtonText}>Lesson Index</Text>
+                <Ionicons name="chevron-forward" size={16} color="#FFFFFF" />
+              </TouchableOpacity> */}
+            </View>
+          )}
+
+          {/* Available Courses with Green Background */}
+          <View style={styles.continueSection}>
+          <Text style={styles.continueText}>Chapters</Text>
+        </View>
+          <View style={styles.availableCoursesSection}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.scrollViewContent}
+            >
+              {chapterProgress.map((chapterProgress) => (
+                <TouchableOpacity
+                  key={chapterProgress.chapter_id}
+                  onPress={openLessonModal}
                 >
                   <View style={styles.chapterCard}>
-                    <Image 
-                      source={getImageUrl(module.header_image_url || null)} 
-                      style={styles.chapterImage} 
+                    <Image
+                      source={getImageUrl(chapterProgress.cover_image_url || null)}
+                      style={styles.chapterImage}
                     />
+                    {/* Heart Icon */}
+                    <AnimatedHeart chapterId={chapterProgress.chapter_id} />
                     <View style={styles.chapterTextContainer}>
-                      <Text style={styles.chapterTitle}>{module.title}</Text>
+                      <Text style={styles.chapterTitle}>{chapterProgress.chapter_title}</Text>
+                      <View style={styles.progressContainer}>
+                        <View style={styles.progressContainer}>
+                          <View 
+                            style={[
+                              styles.progressContainer, 
+                              { width: `${chapterProgress.progress_percentage.toFixed(2)}%` }
+                            ]} 
+                          />
+                        </View>
+                        {/* <Text style={styles.progressText}>
+                          {chapterProgress.completed_modules}/{chapterProgress.total_modules} modules
+                        </Text> */}
+                      </View>
                       <View style={styles.lessonButton}>
-                        <Text style={styles.lessonButtonText}>Start Lesson</Text>
+                        <Text style={styles.lessonButtonText}>
+                          Lesson Index
+                        </Text>
                       </View>
                     </View>
                   </View>
@@ -227,15 +658,25 @@ export default function CourseScreen() {
               ))}
             </ScrollView>
           </View>
-        )}
 
-        {/* Footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            App Development by Adventech in partnership with TBD...
-          </Text>
+          {/* Footer with Green Background */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              App Development by Adventech in partnership with TBD...
+            </Text>
+          </View>
         </View>
       </ScrollView>
+
+      {/* Lesson Index Modal */}
+      <LessonIndexModal
+        visible={showLessonModal}
+        onClose={closeLessonModal}
+        modules={modules}
+        courseTitle={currentCourseTitle}
+        onLessonPress={handleModulePress}
+        completedLessons={completedLessons}
+      />
     </SafeAreaView>
   );
 }
@@ -252,67 +693,85 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
   },
+  headerSpacer: {
+    width: 28, // Same width as the menu icon to balance the layout
+  },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
+    textAlign: 'center',
+    flex: 1,
+  },
+  courseCarousel: {
+    maxHeight: 450, // Adjust as needed
   },
   courseCard: {
+    width: screenWidth,
     alignItems: 'center',
-    marginHorizontal: 20,
-    marginVertical: 10,
+    paddingHorizontal: 40,
+    paddingTop: 10,
   },
   courseImage: {
     width: '100%',
     height: 200,
-    borderRadius: 10,
+    borderRadius: 12,
+    marginBottom: 15,
   },
   courseTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
-    marginVertical: 10,
+    marginBottom: 25,
     textAlign: 'center',
+    color: '#6B8E23',
+    lineHeight: 30,
   },
   progressContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 10,
+    marginTop: 10,
+    marginBottom: 15,
   },
   progressTextContainer: {
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
+    top: 35,
   },
   progressText: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
+    color: '#6B8E23',
   },
   progressLabel: {
-    fontSize: 14,
-    color: 'gray',
-    marginTop: 4,
+    fontSize: 12,
+    color: '#6B8E23',
+    marginTop: 8,
+    fontWeight: '500',
   },
   continueSection: {
-    backgroundColor: '#6B8E23', // Olive Drab
-    padding: 20,
-    marginVertical: 10,
+    backgroundColor: '#56621c',
+    paddingHorizontal: 20,
+    paddingVertical: 25,
+    marginTop: 30,
   },
   continueText: {
     color: 'white',
-    fontSize: 18,
+    fontSize: 28,
     fontWeight: 'bold',
+    marginBottom: 5,
   },
   continueSubtitle: {
     color: 'white',
-    fontSize: 14,
+    fontSize: 16,
+    opacity: 0.9,
   },
-  chaptersSection: {
-    marginVertical: 10,
+  greenBackgroundContainer: {
+    backgroundColor: '#56621c', // Olive green background for everything below Continue
   },
-  chaptersTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginLeft: 20,
-    marginBottom: 10,
+  availableCoursesSection: {
+    paddingHorizontal: 5,
+    paddingVertical: 15,
+    alignItems: 'center', // Center align the course cards
   },
   chapterCard: {
     width: 250,
@@ -331,21 +790,22 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: 'white',
-    padding: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
     borderBottomLeftRadius: 10,
     borderBottomRightRadius: 10,
     alignItems: 'center',
   },
   chapterTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 40,
+    fontWeight: '400',
     marginBottom: 10,
   },
   lessonButton: {
     backgroundColor: 'black',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 10,
   },
   lessonButtonText: {
     color: 'white',
@@ -353,10 +813,11 @@ const styles = StyleSheet.create({
   footer: {
     padding: 20,
     alignItems: 'center',
+    backgroundColor: '#56621c', // Green background to match design
   },
   footerText: {
     fontSize: 12,
-    color: 'gray',
+    color: 'white', // White text on green background
     textAlign: 'center',
   },
   loadingContainer: {
@@ -391,5 +852,182 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  // Modal Styles
+  continueCardSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    alignItems: 'center', // Center align the cards
+  },
+  continueCard: {
+    width: 300,
+    height: 120,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginRight: 15,
+  },
+  continueCardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  continueCardOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.51)',
+  },
+  continueCardContent: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 15,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  },
+  continueProgressContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  continueProgressText: {
+    position: 'absolute',
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  continueCardTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+
+  // Lesson Index Button
+  lessonIndexButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
+    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 15,
+    marginHorizontal: 20,
+    width: 280, // Same width as continue card for consistency
+    alignSelf: 'center', // Center the button
+  },
+  lessonIndexButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  scrollViewContent: {
+    alignItems: 'center', // Center align scroll view content
+    justifyContent: 'center',
+  },
+  heartIcon: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 10,
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
+
+// Modal Styles
+const modalStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    padding: 5,
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  sectionTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 20,
+  },
+  lessonItem: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    marginBottom: 15,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  completedLesson: {
+    backgroundColor: '#F0F8F0',
+    borderColor: '#6B8E23',
+  },
+  lockedLesson: {
+    backgroundColor: '#F5F5F5',
+    borderColor: '#CCC',
+  },
+  lessonContent: {
+    flex: 1,
+  },
+  lessonHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  lessonNumber: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#6B8E23',
+    marginRight: 8,
+    minWidth: 24,
+  },
+  lessonTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  lockedText: {
+    color: '#999',
+  },
+  lessonDescription: {
+    fontSize: 14,
+    color: '#666',
+    lineHeight: 20,
   },
 });

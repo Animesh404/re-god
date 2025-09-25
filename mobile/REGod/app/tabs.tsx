@@ -20,6 +20,8 @@ export default function TabsLayout() {
         tabBarStyle: Platform.select({
           ios: {
             position: 'absolute',
+            justifyContent: 'center',
+            alignItems: 'center',
           },
           default: {},
         }),

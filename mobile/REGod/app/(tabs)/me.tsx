@@ -14,6 +14,7 @@ export default function MeScreen() {
       <ScrollView>
         {/* Header */}
         <View style={styles.header}>
+          <View style={styles.headerSpacer} />
           <Text style={styles.headerTitle}>Me</Text>
           <TouchableOpacity>
             <Ionicons name="menu" size={28} color="black" />
@@ -98,9 +99,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
   },
+  headerSpacer: {
+    width: 28, // Same width as the menu icon to balance the layout
+  },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
+    textAlign: 'center',
+    flex: 1,
   },
   profileSection: {
     alignItems: 'center',

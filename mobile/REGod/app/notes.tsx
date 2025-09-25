@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Activity
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import ApiService, { type Note } from './services/api';
+import ApiService, { type Note } from '../src/services/api';
 
 export default function NotesScreen() {
   const router = useRouter();

@@ -1,10 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import ApiService, { type Module } from '../services/api';
-import { useAuth } from '../contexts/AuthContext';
+import ApiService, { type Module } from '../../src/services/api';
+import { useAuth } from '../../src/contexts/AuthContext';
+
+// Types for quiz and reflection functionality
+interface QuizQuestion {
+  id: string;
+  type: 'multiple_choice' | 'reflection' | 'true_false' | 'short_answer';
+  question: string;
+  options?: string[];
+  correctAnswer?: string;
+  required: boolean;
+}
+
+interface QuizResponse {
+  questionId: string;
+  answer: string;
+  type: QuizQuestion['type'];
+}
+
+interface ResponseModalProps {
+  visible: boolean;
+  onClose: () => void;
+  questions: QuizQuestion[];
+  onSubmit: (responses: QuizResponse[]) => void;
+  title: string;
+}
 
 export default function LessonScreen() {
   const { moduleId, courseId } = useLocalSearchParams<{ moduleId: string; courseId?: string }>();
@@ -13,6 +37,160 @@ export default function LessonScreen() {
   const [module, setModule] = useState<Module | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showResponseModal, setShowResponseModal] = useState(false);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [responses, setResponses] = useState<QuizResponse[]>([]);
+  const [reflectionText, setReflectionText] = useState('');
+
+  // Response Modal Component
+  function ResponseModal({ visible, onClose, questions, onSubmit, title }: ResponseModalProps) {
+    const [currentResponses, setCurrentResponses] = useState<QuizResponse[]>([]);
+    const [currentReflection, setCurrentReflection] = useState('');
+    const currentQuestion = questions[currentQuestionIndex];
+
+    const handleAnswerSelect = (answer: string) => {
+      const newResponse: QuizResponse = {
+        questionId: currentQuestion.id,
+        answer,
+        type: currentQuestion.type
+      };
+
+      setCurrentResponses(prev => {
+        const filtered = prev.filter(r => r.questionId !== currentQuestion.id);
+        return [...filtered, newResponse];
+      });
+    };
+
+    const handleNext = () => {
+      if (currentQuestionIndex < questions.length - 1) {
+        setCurrentQuestionIndex(prev => prev + 1);
+      } else {
+        onSubmit(currentResponses);
+      }
+    };
+
+    const handlePrevious = () => {
+      if (currentQuestionIndex > 0) {
+        setCurrentQuestionIndex(prev => prev - 1);
+      }
+    };
+
+    const canProceed = () => {
+      if (!currentQuestion.required) return true;
+      const response = currentResponses.find(r => r.questionId === currentQuestion.id);
+      return response && response.answer.trim().length > 0;
+    };
+
+    if (!currentQuestion) return null;
+
+    return (
+      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+        <SafeAreaView style={responseModalStyles.container}>
+          <View style={responseModalStyles.header}>
+            <Text style={responseModalStyles.headerTitle}>{title}</Text>
+            <TouchableOpacity onPress={onClose} style={responseModalStyles.closeButton}>
+              <Ionicons name="close" size={24} color="black" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={responseModalStyles.progressContainer}>
+            <Text style={responseModalStyles.progressText}>
+              {currentQuestionIndex + 1} of {questions.length}
+            </Text>
+            <View style={responseModalStyles.progressBar}>
+              <View style={[responseModalStyles.progressFill, { width: `${((currentQuestionIndex + 1) / questions.length) * 100}%` }]} />
+            </View>
+          </View>
+
+          <ScrollView style={responseModalStyles.content}>
+            <View style={responseModalStyles.questionContainer}>
+              <Text style={responseModalStyles.questionTitle}>{currentQuestion.question}</Text>
+
+              {currentQuestion.type === 'reflection' && (
+                <TextInput
+                  style={responseModalStyles.reflectionInput}
+                  multiline
+                  placeholder="Write your reflection here..."
+                  value={currentReflection}
+                  onChangeText={setCurrentReflection}
+                  textAlignVertical="top"
+                />
+              )}
+
+              {currentQuestion.type === 'multiple_choice' && currentQuestion.options && (
+                <View style={responseModalStyles.optionsContainer}>
+                  {currentQuestion.options.map((option, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        responseModalStyles.option,
+                        currentResponses.find(r => r.questionId === currentQuestion.id)?.answer === option &&
+                        responseModalStyles.selectedOption
+                      ]}
+                      onPress={() => handleAnswerSelect(option)}
+                    >
+                      <Text style={responseModalStyles.optionText}>{option}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {currentQuestion.type === 'true_false' && (
+                <View style={responseModalStyles.optionsContainer}>
+                  {['True', 'False'].map((option) => (
+                    <TouchableOpacity
+                      key={option}
+                      style={[
+                        responseModalStyles.option,
+                        currentResponses.find(r => r.questionId === currentQuestion.id)?.answer === option &&
+                        responseModalStyles.selectedOption
+                      ]}
+                      onPress={() => handleAnswerSelect(option)}
+                    >
+                      <Text style={responseModalStyles.optionText}>{option}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
+              {currentQuestion.type === 'short_answer' && (
+                <TextInput
+                  style={responseModalStyles.shortAnswerInput}
+                  placeholder="Enter your answer..."
+                  value={currentResponses.find(r => r.questionId === currentQuestion.id)?.answer || ''}
+                  onChangeText={(text) => handleAnswerSelect(text)}
+                />
+              )}
+            </View>
+          </ScrollView>
+
+          <View style={responseModalStyles.footer}>
+            <TouchableOpacity
+              style={[responseModalStyles.navButton, responseModalStyles.previousButton]}
+              onPress={handlePrevious}
+              disabled={currentQuestionIndex === 0}
+            >
+              <Text style={responseModalStyles.previousButtonText}>Previous</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                responseModalStyles.navButton,
+                responseModalStyles.nextButton,
+                !canProceed() && responseModalStyles.disabledButton
+              ]}
+              onPress={handleNext}
+              disabled={!canProceed()}
+            >
+              <Text style={responseModalStyles.nextButtonText}>
+                {currentQuestionIndex === questions.length - 1 ? 'Submit' : 'Next'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+    );
+  }
 
   useEffect(() => {
     if (moduleId && isAuthenticated && !authLoading) {
@@ -47,8 +225,129 @@ export default function LessonScreen() {
   };
 
   const handleResponsePress = () => {
-    // TODO: Implement response functionality
-    Alert.alert('Response', 'Response functionality will be implemented soon');
+    if (!module?.response_prompt) {
+      Alert.alert('No Response Required', 'This lesson does not require a response.');
+      return;
+    }
+
+    // Parse the response prompt to create quiz questions
+    const questions = parseResponsePrompt(module.response_prompt);
+    if (questions.length === 0) {
+      Alert.alert('Response', 'Please provide your reflection on this lesson.');
+      return;
+    }
+
+    setShowResponseModal(true);
+    setCurrentQuestionIndex(0);
+    setResponses([]);
+  };
+
+  const parseResponsePrompt = (prompt: string): QuizQuestion[] => {
+    // This is a simplified parser - in production, you might want to use a more sophisticated
+    // parsing system or have the backend provide structured quiz data
+    const questions: QuizQuestion[] = [];
+
+    // Try to identify different types of questions in the prompt
+    const lines = prompt.split('\n').filter(line => line.trim());
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      if (line.startsWith('Q:') || line.includes('?')) {
+        const questionText = line.replace(/^Q:\s*/, '').replace(/\?$/, '');
+        let type: QuizQuestion['type'] = 'reflection';
+        let options: string[] | undefined;
+
+        // Check if it's a multiple choice question
+        if (line.toLowerCase().includes('choose') || line.toLowerCase().includes('select')) {
+          type = 'multiple_choice';
+          options = [];
+
+          // Look for options in subsequent lines
+          for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+            const nextLine = lines[j].trim();
+            if (nextLine.match(/^[A-D]\./) || nextLine.match(/^\d+\./)) {
+              options.push(nextLine);
+            } else if (nextLine && !nextLine.includes('?')) {
+              break;
+            }
+          }
+        } else if (line.toLowerCase().includes('true or false') || line.toLowerCase().includes('yes or no')) {
+          type = 'true_false';
+        } else if (line.toLowerCase().includes('explain') || line.toLowerCase().includes('describe')) {
+          type = 'short_answer';
+        }
+
+        questions.push({
+          id: `q${i + 1}`,
+          type,
+          question: questionText,
+          options: options?.length ? options : undefined,
+          required: true
+        });
+      }
+    }
+
+    // If no structured questions found, create a single reflection question
+    if (questions.length === 0) {
+      questions.push({
+        id: 'reflection1',
+        type: 'reflection',
+        question: prompt,
+        required: true
+      });
+    }
+
+    return questions;
+  };
+
+  const handleResponseSubmit = async (submittedResponses: QuizResponse[]) => {
+    try {
+      setShowResponseModal(false);
+
+      // Save responses to backend
+      if (module && courseId) {
+        // Create a note with the response
+        await ApiService.createNote(
+          parseInt(courseId),
+          parseInt(moduleId),
+          `Lesson Response: ${submittedResponses.map(r => r.answer).join(' | ')}`
+        );
+
+        // Mark lesson as completed with responses
+        await ApiService.completeLesson(
+          parseInt(courseId),
+          parseInt(moduleId),
+          submittedResponses
+        );
+
+        // Update course progress - let backend calculate the correct percentage
+        // based on total modules in the course
+        await ApiService.updateCourseProgress(
+          parseInt(courseId),
+          null, // Let backend calculate progress percentage
+          parseInt(moduleId),
+          'completed'
+        );
+      }
+
+      Alert.alert(
+        'Response Submitted',
+        'Thank you for your response. The lesson has been marked as completed.',
+        [
+          {
+            text: 'Continue',
+            onPress: () => {
+              // Navigate back to course screen or next lesson
+              router.replace('/(tabs)/course');
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error submitting response:', error);
+      Alert.alert('Error', 'Failed to submit response. Please try again.');
+    }
   };
 
   const handleActionPress = (action: string) => {
@@ -133,9 +432,9 @@ export default function LessonScreen() {
       <ScrollView>
         {/* Header Image */}
         {module.header_image_url ? (
-          <Image 
+        <Image 
             source={getImageUrl(module.header_image_url)}
-            style={styles.headerImage}
+          style={styles.headerImage}
             onError={(error) => {
               console.log('Image loading error:', error);
             }}
@@ -164,44 +463,44 @@ export default function LessonScreen() {
 
           {/* Key Verses */}
           {module.key_verses && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Key verses</Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Key verses</Text>
               <View style={styles.keyVersesCard}>
                 <Text style={styles.keyVersesText}>{module.key_verses}</Text>
                 {module.key_verses_ref && (
                   <Text style={styles.keyVersesReference}>Reference: {module.key_verses_ref}</Text>
                 )}
               </View>
-            </View>
+          </View>
           )}
 
           {/* Lesson Study */}
           {module.lesson_study && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Lesson study</Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Lesson study</Text>
               <Text style={styles.contentText}>{module.lesson_study}</Text>
               {module.lesson_study_ref && (
                 <Text style={styles.referenceText}>Reference: {module.lesson_study_ref}</Text>
               )}
-            </View>
+          </View>
           )}
 
           {/* Response Unlock */}
           {module.response_prompt && (
-            <View style={styles.unlockSection}>
-              <Ionicons name="lock-closed" size={32} color="gray" />
-              <Text style={styles.unlockText}>Respond to unlock the next lesson</Text>
+          <View style={styles.unlockSection}>
+            <Ionicons name="lock-closed" size={32} color="gray" />
+            <Text style={styles.unlockText}>Respond to unlock the next lesson</Text>
               <Text style={styles.promptText}>{module.response_prompt}</Text>
               <TouchableOpacity style={styles.responseButton} onPress={handleResponsePress}>
-                <Text style={styles.responseButtonText}>Response</Text>
-              </TouchableOpacity>
-            </View>
+                <Text style={styles.responseButtonText}>Start Response</Text>
+            </TouchableOpacity>
+          </View>
           )}
 
           {/* Music Selection */}
           {module.music_selection && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Music selection</Text>
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Music selection</Text>
               <View style={styles.musicCard}>
                 <View style={styles.musicContent}>
                   <Text style={styles.musicTitle}>{module.music_selection}</Text>
@@ -213,7 +512,7 @@ export default function LessonScreen() {
                   )}
                 </View>
               </View>
-            </View>
+          </View>
           )}
 
           {/* Action Buttons */}
@@ -223,36 +522,47 @@ export default function LessonScreen() {
                 style={styles.actionButton} 
                 onPress={() => handleActionPress('further_study')}
               >
-                <Text style={styles.actionButtonText}>Further study</Text>
-              </TouchableOpacity>
+              <Text style={styles.actionButtonText}>Further study</Text>
+            </TouchableOpacity>
             )}
             {module.personal_experiences && (
               <TouchableOpacity 
                 style={styles.actionButton}
                 onPress={() => handleActionPress('personal_experiences')}
               >
-                <Text style={styles.actionButtonText}>Personal Experiences</Text>
-              </TouchableOpacity>
+              <Text style={styles.actionButtonText}>Personal Experiences</Text>
+            </TouchableOpacity>
             )}
             {module.resources && (
               <TouchableOpacity 
                 style={styles.actionButton}
                 onPress={() => handleActionPress('resources')}
               >
-                <Text style={styles.actionButtonText}>Resources</Text>
-              </TouchableOpacity>
+              <Text style={styles.actionButtonText}>Resources</Text>
+            </TouchableOpacity>
             )}
             {module.artwork && (
               <TouchableOpacity 
                 style={styles.actionButton}
                 onPress={() => handleActionPress('artwork')}
               >
-                <Text style={styles.actionButtonText}>Artwork</Text>
-              </TouchableOpacity>
+              <Text style={styles.actionButtonText}>Artwork</Text>
+            </TouchableOpacity>
             )}
           </View>
         </View>
       </ScrollView>
+
+      {/* Response Modal */}
+      {module?.response_prompt && (
+        <ResponseModal
+          visible={showResponseModal}
+          onClose={() => setShowResponseModal(false)}
+          questions={parseResponsePrompt(module.response_prompt)}
+          title="Lesson Response"
+          onSubmit={handleResponseSubmit}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -446,5 +756,136 @@ const styles = StyleSheet.create({
   actionButtonText: {
     fontSize: 16,
     fontWeight: '500',
+  },
+});
+
+// Response Modal Styles
+const responseModalStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E0E0',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  closeButton: {
+    padding: 5,
+  },
+  progressContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  progressText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  progressBar: {
+    height: 4,
+    backgroundColor: '#E0E0E0',
+    borderRadius: 2,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#6B8E23',
+    borderRadius: 2,
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  questionContainer: {
+    flex: 1,
+  },
+  questionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 24,
+    lineHeight: 28,
+  },
+  reflectionInput: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 12,
+    padding: 16,
+    fontSize: 16,
+    minHeight: 120,
+    textAlignVertical: 'top',
+  },
+  shortAnswerInput: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+  },
+  optionsContainer: {
+    gap: 12,
+  },
+  option: {
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    borderRadius: 8,
+    padding: 16,
+    backgroundColor: 'white',
+  },
+  selectedOption: {
+    borderColor: '#6B8E23',
+    backgroundColor: '#F0F8F0',
+  },
+  optionText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+    backgroundColor: 'white',
+  },
+  navButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  previousButton: {
+    backgroundColor: 'white',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    marginRight: 10,
+  },
+  nextButton: {
+    backgroundColor: '#6B8E23',
+    marginLeft: 10,
+  },
+  disabledButton: {
+    backgroundColor: '#CCC',
+  },
+  previousButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  nextButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import ApiService, { type Message, type ChatResponse } from './services/api';
+import ApiService, { type Message, type ChatResponse } from '../src/services/api';
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
