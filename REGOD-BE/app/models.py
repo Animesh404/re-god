@@ -43,7 +43,7 @@ class User(Base):
     name = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
-    clerk_user_id = Column(String, nullable=True)
+    clerk_user_id = Column(String, nullable=True, unique=True, index=True)
     is_active = Column(Boolean, default=True)
     is_verified = Column(Boolean, default=False)
     onboarding_completed = Column(Boolean, default=False)

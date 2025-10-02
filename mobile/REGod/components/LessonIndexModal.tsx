@@ -14,6 +14,22 @@ interface LessonIndexModalProps {
   completedLessons: Set<number>;
   progressPercentage: number;
   chapterTitle?: string;
+  showChapterProgress?: boolean; // New prop to control chapter progress section visibility
+  detailedProgress?: {
+    course_progress: {
+      total_modules: number;
+      completed_modules: number;
+      progress_percentage: number;
+    };
+    chapters: Array<{
+      chapter_id: number;
+      chapter_title: string;
+      total_modules: number;
+      completed_modules: number;
+      progress_percentage: number;
+      is_completed: boolean;
+    }>;
+  };
 }
 
 export default function LessonIndexModal({
@@ -24,7 +40,9 @@ export default function LessonIndexModal({
   onLessonPress,
   completedLessons,
   progressPercentage,
-  chapterTitle
+  chapterTitle,
+  showChapterProgress = true,
+  detailedProgress
 }: LessonIndexModalProps) {
   return (
     <Modal
@@ -54,56 +72,89 @@ export default function LessonIndexModal({
         </View>
 
         <ScrollView style={styles.content}>
-          {modules.map((module, index) => {
-            const isCompleted = completedLessons.has(module.id);
-            const isLocked = index > 0 && !completedLessons.has(modules[index - 1]?.id);
-
-            return (
-              <TouchableOpacity
-                key={module.id}
-                style={[
-                  styles.lessonItem,
-                  isCompleted && styles.completedLesson,
-                  isLocked && styles.lockedLesson
-                ]}
-                onPress={async () => {
-                  if (!isLocked) {
-                    console.log('Lesson pressed, calling onLessonPress and onClose');
-                    await onLessonPress(module);
-                    // Close modal after a small delay to ensure navigation happens
-                    setTimeout(() => {
-                      onClose();
-                    }, 100);
-                  }
-                }}
-                disabled={isLocked}
-              >
-                <View style={styles.lessonContent}>
-                  <View style={styles.lessonHeader}>
-                    <Ionicons 
-                      name={isLocked ? "lock-closed" : "lock-open"} 
-                      size={16} 
-                      color={isLocked ? "#999" : "#6B8E23"} 
-                    />
+          {/* Chapter Progress Section */}
+          {showChapterProgress && detailedProgress?.chapters && detailedProgress.chapters.length > 0 && (
+            <View style={styles.chapterProgressSection}>
+              <Text style={styles.sectionTitle}>Chapter Progress</Text>
+              {detailedProgress.chapters.map((chapter, index) => (
+                <View key={chapter.chapter_id} style={styles.chapterProgressItem}>
+                  <View style={styles.chapterProgressHeader}>
+                    <Text style={styles.chapterTitle}>{chapter.chapter_title}</Text>
+                    <View style={styles.chapterProgressContainer}>
+                      <CircularProgress
+                        size={30}
+                        strokeWidth={3}
+                        progress={chapter.progress_percentage}
+                        backgroundColor="#E8E8E8"
+                        progressColor={chapter.is_completed ? "#6B8E23" : "#FFA500"}
+                      />
+                      <Text style={styles.chapterProgressText}>
+                        {chapter.progress_percentage.toFixed(0)}%
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={[
-                    styles.lessonTitle,
-                    isLocked && styles.lockedText
-                  ]}>
-                    {module.title}
+                  <Text style={styles.chapterProgressDetails}>
+                    {chapter.completed_modules}/{chapter.total_modules} modules completed
                   </Text>
-                  {module.description && (
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Lessons Section */}
+          <View style={styles.lessonsSection}>
+            <Text style={styles.sectionTitle}>Lessons</Text>
+            {modules.map((module, index) => {
+              const isCompleted = completedLessons.has(module.id);
+              const isLocked = index > 0 && !completedLessons.has(modules[index - 1]?.id);
+
+              return (
+                <TouchableOpacity
+                  key={module.id}
+                  style={[
+                    styles.lessonItem,
+                    isCompleted && styles.completedLesson,
+                    isLocked && styles.lockedLesson
+                  ]}
+                  onPress={async () => {
+                    if (!isLocked) {
+                      console.log('Lesson pressed, calling onLessonPress and onClose');
+                      await onLessonPress(module);
+                      // Close modal after a small delay to ensure navigation happens
+                      setTimeout(() => {
+                        onClose();
+                      }, 100);
+                    }
+                  }}
+                  disabled={isLocked}
+                >
+                  <View style={styles.lessonContent}>
+                    <View style={styles.lessonHeader}>
+                      <Ionicons 
+                        name={isLocked ? "lock-closed" : "lock-open"} 
+                        size={16} 
+                        color={isLocked ? "#999" : "#6B8E23"} 
+                      />
+                    </View>
                     <Text style={[
-                      styles.lessonDescription,
+                      styles.lessonTitle,
                       isLocked && styles.lockedText
                     ]}>
-                      {module.description}
+                      {module.title}
                     </Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
+                    {module.description && (
+                      <Text style={[
+                        styles.lessonDescription,
+                        isLocked && styles.lockedText
+                      ]}>
+                        {module.description}
+                      </Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -200,5 +251,51 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     lineHeight: 20,
+  },
+  chapterProgressSection: {
+    marginBottom: 20,
+  },
+  lessonsSection: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#6B8E23',
+    marginBottom: 15,
+  },
+  chapterProgressItem: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#6B8E23',
+  },
+  chapterProgressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  chapterTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+  },
+  chapterProgressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  chapterProgressText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#6B8E23',
+    marginLeft: 8,
+  },
+  chapterProgressDetails: {
+    fontSize: 12,
+    color: '#666',
   },
 });

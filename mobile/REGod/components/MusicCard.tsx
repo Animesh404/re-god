@@ -16,7 +16,7 @@ export default function MusicCard({ title, mediaUrl, onPlay, style }: MusicCardP
         <Text style={styles.musicTitle}>{title}</Text>
         {mediaUrl && (
           <TouchableOpacity style={styles.playButton} onPress={onPlay}>
-            <Ionicons name="play" size={16} color="white" />
+            <Ionicons name="play" size={16} color="#56621c" />
             <Text style={styles.playButtonText}>Play</Text>
           </TouchableOpacity>
         )}
@@ -27,8 +27,8 @@ export default function MusicCard({ title, mediaUrl, onPlay, style }: MusicCardP
 
 const styles = StyleSheet.create({
   musicCard: {
-    backgroundColor: '#6B8E23',
-    borderRadius: 12,
+    backgroundColor: '#384513',
+    borderRadius: 5,
     padding: 20,
     shadowColor: '#000',
     shadowOffset: {
@@ -49,19 +49,20 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   playButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: '#f5f2ec',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 100,
     paddingVertical: 8,
-    borderRadius: 15,
+    borderRadius: 5,
     marginTop: 8,
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   playButtonText: {
-    color: 'white',
+    color: '#56621c',
+    fontWeight: 'bold',
     fontSize: 12,
     marginLeft: 4,
   },

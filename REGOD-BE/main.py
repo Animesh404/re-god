@@ -85,15 +85,20 @@ app = FastAPI(
 )
 
 # Middleware
+if config.NODE_ENV == "development":
+    # Allow all origins in development
+    cors_origins = ["*"]
+else:
+    # Specific origins in production
+    cors_origins = [
+        "https://regod.app",
+        "https://www.regod.app"
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://localhost:3000",
-        "https://906670ce5cdf.ngrok-free.app",
-        "*" if config.NODE_ENV == "development" else "https://regod.app"
-    ],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=True if config.NODE_ENV != "development" else False,  # Disable credentials with wildcard
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -377,7 +382,7 @@ async def run_migrations():
     
     -- User module progress
     CREATE TABLE IF NOT EXISTS user_module_progress (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        id serial PRIMARY KEY,
         user_id uuid REFERENCES users(id) ON DELETE CASCADE,
         course_id integer,
         module_id integer,
@@ -389,6 +394,19 @@ async def run_migrations():
     -- Add columns to existing lesson_completions table if they don't exist
     ALTER TABLE lesson_completions ADD COLUMN IF NOT EXISTS responses jsonb;
     ALTER TABLE lesson_completions ADD COLUMN IF NOT EXISTS completed_at timestamptz DEFAULT now();
+    
+    -- Ensure user_module_progress has the unique constraint
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint 
+            WHERE conname = 'user_module_progress_user_course_module_unique'
+        ) THEN
+            ALTER TABLE user_module_progress 
+            ADD CONSTRAINT user_module_progress_user_course_module_unique 
+            UNIQUE (user_id, course_id, module_id);
+        END IF;
+    END $$;
 
     -- Teacher codes
     CREATE TABLE IF NOT EXISTS teacher_codes (
@@ -1563,40 +1581,7 @@ async def refresh_token(request: RefreshTokenRequest):
         logger.error(f"Refresh token error: {e}")
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-# Clerk token exchange endpoint
-@app.post("/api/auth/clerk-exchange")
-async def clerk_exchange(request: dict, current_user: dict = Depends(get_current_user)):
-    """Exchange Clerk token for backend JWT token"""
-    try:
-        # Create a JWT token for the user
-        JWT_SECRET = config.JWT_SECRET
-        JWT_ACCESS_TTL = config.JWT_ACCESS_TTL
-
-        payload = {
-            "sub": current_user["id"],
-            "email": current_user["email"],
-            "name": current_user["name"],
-            "role": current_user["role"],
-            "verified": current_user["verified"],
-            "exp": int(time.time()) + JWT_ACCESS_TTL,
-            "iat": int(time.time()),
-            "type": "backend_jwt"
-        }
-
-        jwt_token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-
-        return {
-            "auth_token": jwt_token,
-            "refresh_token": jwt_token,  # For now, use same token
-            "user_id": current_user["id"],
-            "user_data": current_user
-        }
-    except Exception as e:
-        logger.error(f"Clerk exchange error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": {"code": "EXCHANGE_FAILED", "message": "Token exchange failed"}}
-        )
+# Duplicate clerk-exchange endpoint removed - using the comprehensive one above
 
 # Favourites endpoints
 @app.post("/api/user/favourites/{lesson_id}")
@@ -1650,9 +1635,9 @@ async def get_or_create_thread(current_user: dict = Depends(get_current_user)):
             # Get assigned teacher
             teacher = await conn.fetchrow(
                 """
-                SELECT u.id, u.name FROM teacher_assignments ta
-                JOIN users u ON ta.teacher_id = u.id
-                WHERE ta.student_id = $1 AND ta.active = true
+                SELECT u.id, u.name, u.avatar_url FROM student_teacher_access sta
+                JOIN users u ON sta.teacher_id = u.id
+                WHERE sta.student_id = $1 AND sta.is_active = true
                 LIMIT 1
                 """,
                 uuid.UUID(current_user["id"])
@@ -1666,13 +1651,13 @@ async def get_or_create_thread(current_user: dict = Depends(get_current_user)):
             
             # Get or create thread
             thread = await conn.fetchrow(
-                "SELECT id FROM chat_threads WHERE student_id = $1 AND teacher_id = $2",
+                "SELECT id FROM chat_threads WHERE user_id = $1 AND assigned_teacher_id = $2",
                 uuid.UUID(current_user["id"]), teacher["id"]
             )
             
             if not thread:
                 thread_id = await conn.fetchval(
-                    "INSERT INTO chat_threads (student_id, teacher_id) VALUES ($1, $2) RETURNING id",
+                    "INSERT INTO chat_threads (user_id, assigned_teacher_id) VALUES ($1, $2) RETURNING id",
                     uuid.UUID(current_user["id"]), teacher["id"]
                 )
             else:
@@ -1685,15 +1670,24 @@ async def get_or_create_thread(current_user: dict = Depends(get_current_user)):
             )
             
             return {
+                "id": str(teacher["id"]),
+                "name": teacher["name"],
+                "avatar_url": teacher["avatar_url"],
+                "is_online": False,  # TODO: Implement online status
                 "thread_id": str(thread_id),
-                "recipient_name": teacher["name"],
                 "unread_count": unread_count
             }
         
+        elif current_user["role"] == "teacher":
+            # For teachers, redirect to the students endpoint
+            raise HTTPException(
+                status_code=status.HTTP_302_FOUND,
+                detail={"error": {"code": "USE_STUDENTS_ENDPOINT", "message": "Teachers should use /api/connect/students endpoint"}}
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail={"error": {"code": "FORBIDDEN", "message": "Only students can access this endpoint"}}
+                detail={"error": {"code": "FORBIDDEN", "message": "Only students and teachers can access this endpoint"}}
             )
 
 @app.get("/api/connect/thread/messages")
@@ -1701,8 +1695,8 @@ async def get_thread_messages(thread_id: str, current_user: dict = Depends(get_c
     async with db_pool.acquire() as conn:
         # Verify access to thread
         thread = await conn.fetchrow(
-            "SELECT student_id, teacher_id FROM chat_threads WHERE id = $1",
-            uuid.UUID(thread_id)
+            "SELECT user_id, assigned_teacher_id FROM chat_threads WHERE id = $1",
+            int(thread_id)
         )
         
         if not thread:
@@ -1712,7 +1706,7 @@ async def get_thread_messages(thread_id: str, current_user: dict = Depends(get_c
             )
         
         user_id = uuid.UUID(current_user["id"])
-        if user_id not in [thread["student_id"], thread["teacher_id"]] and current_user["role"] != "admin":
+        if user_id not in [thread["user_id"], thread["assigned_teacher_id"]] and current_user["role"] != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"error": {"code": "FORBIDDEN", "message": "Access denied to this thread"}}
@@ -1727,13 +1721,13 @@ async def get_thread_messages(thread_id: str, current_user: dict = Depends(get_c
             WHERE cm.thread_id = $1
             ORDER BY cm.timestamp ASC
             """,
-            uuid.UUID(thread_id)
+            int(thread_id)
         )
         
         # Mark messages as read for current user
         await conn.execute(
             "UPDATE chat_messages SET read_status = true WHERE thread_id = $1 AND sender_id != $2",
-            uuid.UUID(thread_id), user_id
+            int(thread_id), user_id
         )
     
     return {
@@ -1752,8 +1746,8 @@ async def send_message(request: MessageRequest, current_user: dict = Depends(get
     async with db_pool.acquire() as conn:
         # Verify access to thread
         thread = await conn.fetchrow(
-            "SELECT student_id, teacher_id FROM chat_threads WHERE id = $1",
-            uuid.UUID(request.thread_id)
+            "SELECT user_id, assigned_teacher_id FROM chat_threads WHERE id = $1",
+            int(request.thread_id)
         )
         
         if not thread:
@@ -1763,7 +1757,7 @@ async def send_message(request: MessageRequest, current_user: dict = Depends(get
             )
         
         user_id = uuid.UUID(current_user["id"])
-        if user_id not in [thread["student_id"], thread["teacher_id"]]:
+        if user_id not in [thread["user_id"], thread["assigned_teacher_id"]]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={"error": {"code": "FORBIDDEN", "message": "Access denied to this thread"}}
@@ -1775,11 +1769,11 @@ async def send_message(request: MessageRequest, current_user: dict = Depends(get
             INSERT INTO chat_messages (thread_id, sender_id, sender_type, content)
             VALUES ($1, $2, $3, $4) RETURNING id
             """,
-            uuid.UUID(request.thread_id), user_id, current_user["role"], request.content
+            int(request.thread_id), user_id, current_user["role"], request.content
         )
     
     # Send real-time notification to other participant
-    recipient_id = str(thread["teacher_id"]) if user_id == thread["student_id"] else str(thread["student_id"])
+    recipient_id = str(thread["assigned_teacher_id"]) if user_id == thread["user_id"] else str(thread["user_id"])
     await manager.send_personal_message({
         "event": "message:receive",
         "data": {
@@ -1810,31 +1804,180 @@ async def get_chat_history(current_user: dict = Depends(get_current_user)):
     # Return empty chat history for now
     return []
 
+@app.get("/api/connect/students")
+async def get_assigned_students(current_user: dict = Depends(get_current_user)):
+    """Get assigned students for teachers"""
+    if current_user["role"] != "teacher":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": {"code": "FORBIDDEN", "message": "Only teachers can access this endpoint"}}
+        )
+    
+    async with db_pool.acquire() as conn:
+        students = await conn.fetch(
+            """
+            SELECT DISTINCT u.id, u.name, u.avatar_url, 
+                   (SELECT COUNT(*) FROM chat_messages cm 
+                    JOIN chat_threads ct ON cm.thread_id = ct.id 
+                    WHERE ct.assigned_teacher_id = $1 AND ct.user_id = u.id 
+                    AND cm.sender_id != $1 AND cm.read_status = false) as unread_count,
+                   (SELECT cm.content FROM chat_messages cm 
+                    JOIN chat_threads ct ON cm.thread_id = ct.id 
+                    WHERE ct.assigned_teacher_id = $1 AND ct.user_id = u.id 
+                    ORDER BY cm.timestamp DESC LIMIT 1) as last_message,
+                   (SELECT cm.timestamp FROM chat_messages cm 
+                    JOIN chat_threads ct ON cm.thread_id = ct.id 
+                    WHERE ct.assigned_teacher_id = $1 AND ct.user_id = u.id 
+                    ORDER BY cm.timestamp DESC LIMIT 1) as last_message_time
+            FROM student_teacher_access sta
+            JOIN users u ON sta.student_id = u.id
+            WHERE sta.teacher_id = $1 AND sta.is_active = true
+            ORDER BY last_message_time DESC NULLS LAST
+            """,
+            uuid.UUID(current_user["id"])
+        )
+        
+        return [
+            {
+                "id": str(student["id"]),
+                "name": student["name"],
+                "avatar_url": student["avatar_url"],
+                "unread_count": student["unread_count"] or 0,
+                "last_message": student["last_message"],
+                "last_message_time": student["last_message_time"].isoformat() if student["last_message_time"] else None,
+                "is_online": False  # TODO: Implement online status
+            }
+            for student in students
+        ]
+
 # Notes endpoints
 @app.get("/api/user/notes")
 async def get_notes(current_user: dict = Depends(get_current_user)):
     async with db_pool.acquire() as conn:
         notes = await conn.fetch(
             """
-            SELECT un.note_content, un.created_at, c.title as course_title
-            FROM user_notes un
-            LEFT JOIN courses c ON un.course_id = c.id
-            WHERE un.user_id = $1
-            ORDER BY un.created_at DESC
+            SELECT id, title, content, created_at, updated_at
+            FROM user_notes
+            WHERE user_id = $1
+            ORDER BY created_at DESC
             """,
             uuid.UUID(current_user["id"])
         )
     
+    return [
+        {
+            "id": note["id"],
+            "user_id": str(current_user["id"]),
+            "title": note["title"],
+            "content": note["content"],
+            "created_at": note["created_at"].isoformat(),
+            "updated_at": note["updated_at"].isoformat() if note["updated_at"] else note["created_at"].isoformat()
+        }
+        for note in notes
+    ]
+
+@app.post("/api/user/notes")
+async def create_note(
+    note_data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Create a new note"""
+    async with db_pool.acquire() as conn:
+        # Insert new note
+        note_id = await conn.fetchval(
+            """
+            INSERT INTO user_notes (user_id, title, content)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            """,
+            uuid.UUID(current_user["id"]),
+            note_data.get("title"),
+            note_data.get("content", "")
+        )
+        
+        # Get the created note
+        note = await conn.fetchrow(
+            """
+            SELECT id, title, content, created_at, updated_at
+            FROM user_notes
+            WHERE id = $1
+            """,
+            note_id
+        )
+    
     return {
-        "notes": [
-            {
-                "note_content": note["note_content"],
-                "course_title": note["course_title"] or "General",
-                "created_at": note["created_at"].isoformat()
-            }
-            for note in notes
-        ]
+        "id": note["id"],
+        "user_id": str(current_user["id"]),
+        "title": note["title"],
+        "content": note["content"],
+        "created_at": note["created_at"].isoformat(),
+        "updated_at": note["updated_at"].isoformat() if note["updated_at"] else note["created_at"].isoformat()
     }
+
+@app.put("/api/user/notes/{note_id}")
+async def update_note(
+    note_id: int,
+    note_data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update an existing note"""
+    async with db_pool.acquire() as conn:
+        # Update note
+        await conn.execute(
+            """
+            UPDATE user_notes 
+            SET title = $1, content = $2, updated_at = NOW()
+            WHERE id = $3 AND user_id = $4
+            """,
+            note_data.get("title"),
+            note_data.get("content", ""),
+            note_id,
+            uuid.UUID(current_user["id"])
+        )
+        
+        # Get the updated note
+        note = await conn.fetchrow(
+            """
+            SELECT id, title, content, created_at, updated_at
+            FROM user_notes
+            WHERE id = $1 AND user_id = $2
+            """,
+            note_id,
+            uuid.UUID(current_user["id"])
+        )
+        
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+    
+    return {
+        "id": note["id"],
+        "user_id": str(current_user["id"]),
+        "title": note["title"],
+        "content": note["content"],
+        "created_at": note["created_at"].isoformat(),
+        "updated_at": note["updated_at"].isoformat() if note["updated_at"] else note["created_at"].isoformat()
+    }
+
+@app.delete("/api/user/notes/{note_id}")
+async def delete_note(
+    note_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a note"""
+    async with db_pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM user_notes 
+            WHERE id = $1 AND user_id = $2
+            """,
+            note_id,
+            uuid.UUID(current_user["id"])
+        )
+        
+        if result == "DELETE 0":
+            raise HTTPException(status_code=404, detail="Note not found")
+    
+    return {"message": "Note deleted successfully"}
 
 # Sharing endpoints
 @app.post("/api/share/course/{course_id}")
@@ -1889,8 +2032,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     async with db_pool.acquire() as conn:
                         # Verify access to thread
                         thread = await conn.fetchrow(
-                            "SELECT student_id, teacher_id FROM chat_threads WHERE id = $1",
-                            uuid.UUID(thread_id)
+                            "SELECT user_id, assigned_teacher_id FROM chat_threads WHERE id = $1",
+                            int(thread_id)
                         )
                         
                         if not thread:
@@ -1914,7 +2057,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             INSERT INTO chat_messages (thread_id, sender_id, sender_type, content)
                             VALUES ($1, $2, $3, $4) RETURNING id
                             """,
-                            uuid.UUID(thread_id), user_uuid, "student", content  # You'd get role from token
+                            int(thread_id), user_uuid, "student", content  # You'd get role from token
                         )
                     
                     # Send confirmation to sender

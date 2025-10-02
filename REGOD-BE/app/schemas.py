@@ -7,6 +7,7 @@ class UserBase(BaseModel):
     email: Optional[str] = None
     name: str
     phone: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -270,17 +271,14 @@ class ThreadResponse(BaseModel):
 
 # Profile Schemas
 class NoteBase(BaseModel):
-    course_id: int
-    lesson_id: int
-    note_content: str
+    title: Optional[str] = None
+    content: str
 
 class NoteResponse(NoteBase):
     id: int
-    user_id: int
+    user_id: str
     created_at: datetime
     updated_at: datetime
-    course_title: str
-    lesson_title: str
     
     class Config:
         from_attributes = True

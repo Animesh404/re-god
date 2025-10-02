@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://906670ce5cdf.ngrok-free.app/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://saint-bennett-attachment-quizzes.trycloudflare.com/api';
 
 interface LoginRequest {
   identifier: string;
@@ -98,7 +98,7 @@ class AdminApiService {
     const token = localStorage.getItem('admin_access_token');
     return {
       'Content-Type': 'application/json',
-      'ngrok-skip-browser-warning': 'true',
+      'cloudflare-skip-browser-warning': 'true',
       ...(token && { Authorization: `Bearer ${token}` }),
     };
   }
@@ -163,7 +163,7 @@ class AdminApiService {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        'ngrok-skip-browser-warning': 'true'
+        'cloudflare-skip-browser-warning': 'true'
       },
       body: JSON.stringify(credentials),
     });

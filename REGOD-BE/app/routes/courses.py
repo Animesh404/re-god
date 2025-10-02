@@ -251,57 +251,27 @@ async def update_course_progress(
             # Use provided progress percentage
             new_progress = progress_data.progress_percentage
         else:
-            # Calculate progress: each chapter completion is worth (100 / total_chapters)%
-            if total_chapters > 0:
-                # Get current progress
-                user_uuid = uuid.UUID(current_user["id"])
-                current_progress = db.query(UserCourseProgress).filter(
-                    UserCourseProgress.user_id == user_uuid,
-                    UserCourseProgress.course_id == progress_data.course_id
-                ).first()
+            # Calculate progress based on individual modules across all chapters
+            user_uuid = uuid.UUID(current_user["id"])
+            
+            # Get all modules in the course
+            total_modules = db.query(Module).filter(
+                Module.course_id == progress_data.course_id,
+                Module.is_active == True
+            ).count()
+            
+            if total_modules > 0:
+                # Get completed modules for this course
+                completed_modules = db.query(UserModuleProgress).filter(
+                    UserModuleProgress.user_id == user_uuid,
+                    UserModuleProgress.course_id == progress_data.course_id,
+                    UserModuleProgress.status == 'completed'
+                ).count()
                 
-                current_prog = current_progress.progress_percentage if current_progress and current_progress.progress_percentage is not None else 0
-                
-                # Calculate progress based on completed chapters
-                # Get all chapters in the course
-                chapters = db.query(Chapter).filter(
-                    Chapter.course_id == progress_data.course_id,
-                    Chapter.is_active == True
-                ).all()
-                
-                completed_chapters = 0
-                
-                for chapter in chapters:
-                    # Get all modules in this chapter
-                    chapter_modules = db.query(Module).filter(
-                        Module.chapter_id == chapter.id,
-                        Module.is_active == True
-                    ).all()
-                    
-                    if not chapter_modules:
-                        # Chapter has no modules, consider it completed
-                        completed_chapters += 1
-                        continue
-                    
-                    # Get completed modules for this chapter
-                    completed_module_count = db.query(UserModuleProgress).filter(
-                        UserModuleProgress.user_id == user_uuid,
-                        UserModuleProgress.course_id == progress_data.course_id,
-                        UserModuleProgress.status == 'completed',
-                        UserModuleProgress.module_id.in_([m.id for m in chapter_modules])
-                    ).count()
-                    
-                    # If all modules in the chapter are completed, chapter is completed
-                    if completed_module_count >= len(chapter_modules):
-                        completed_chapters += 1
-                
-                # Calculate progress based on completed chapters
-                if total_chapters > 0:
-                    new_progress = (completed_chapters / total_chapters) * 100
-                else:
-                    new_progress = 0
+                # Calculate progress based on completed modules
+                new_progress = (completed_modules / total_modules) * 100
             else:
-                new_progress = 100  # If no chapters, mark as complete
+                new_progress = 100  # If no modules, mark as complete
         
         # Find or create user course progress
         user_uuid = uuid.UUID(current_user["id"])
@@ -333,6 +303,208 @@ async def update_course_progress(
     except Exception as e:
         import traceback
         print(f"Error in update_course_progress: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": "INTERNAL_ERROR", "message": f"Internal server error: {str(e)}"}}
+        )
+
+@router.get("/courses/{course_id}/module-progress")
+async def get_module_progress(
+    course_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get module completion status for a course"""
+    try:
+        user_uuid = uuid.UUID(current_user["id"])
+        
+        # Check if user has access to this course
+        course = db.query(Course).filter(Course.id == course_id).first()
+        if not course:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Course not found"
+            )
+        
+        # For students, check if they have access to the teacher who created the course
+        if current_user.get("role") == "student":
+            has_access = db.query(StudentTeacherAccess).filter(
+                StudentTeacherAccess.student_id == user_uuid,
+                StudentTeacherAccess.teacher_id == course.created_by,
+                StudentTeacherAccess.is_active == True
+            ).first()
+            
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have access to this course"
+                )
+        
+        # Get all modules for the course
+        modules = db.query(Module).filter(
+            Module.course_id == course_id,
+            Module.is_active == True
+        ).order_by(Module.order).all()
+        
+        # Get completed modules for the user
+        completed_modules = db.query(UserModuleProgress).filter(
+            UserModuleProgress.user_id == user_uuid,
+            UserModuleProgress.course_id == course_id,
+            UserModuleProgress.status == 'completed'
+        ).all()
+        
+        completed_module_ids = {m.module_id for m in completed_modules}
+        
+        # Return module progress
+        modules_progress = []
+        for module in modules:
+            modules_progress.append({
+                "moduleId": module.id,
+                "completed": module.id in completed_module_ids
+            })
+        
+        return {"modules": modules_progress}
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in get_module_progress: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": {"code": "INTERNAL_ERROR", "message": f"Internal server error: {str(e)}"}}
+        )
+
+@router.get("/courses/{course_id}/detailed-progress")
+async def get_detailed_progress(
+    course_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get detailed progress information including course and chapter progress"""
+    try:
+        user_uuid = uuid.UUID(current_user["id"])
+        
+        # Check if user has access to this course
+        course = db.query(Course).filter(Course.id == course_id).first()
+        if not course:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Course not found"
+            )
+        
+        # For students, check if they have access to the teacher who created the course
+        if current_user.get("role") == "student":
+            has_access = db.query(StudentTeacherAccess).filter(
+                StudentTeacherAccess.student_id == user_uuid,
+                StudentTeacherAccess.teacher_id == course.created_by,
+                StudentTeacherAccess.is_active == True
+            ).first()
+            
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have access to this course"
+                )
+        
+        # Get all chapters in the course
+        chapters = db.query(Chapter).filter(
+            Chapter.course_id == course_id,
+            Chapter.is_active == True
+        ).order_by(Chapter.order).all()
+        
+        # Get all modules in the course
+        all_modules = db.query(Module).filter(
+            Module.course_id == course_id,
+            Module.is_active == True
+        ).all()
+        
+        # Get completed modules for this course
+        completed_modules = db.query(UserModuleProgress).filter(
+            UserModuleProgress.user_id == user_uuid,
+            UserModuleProgress.course_id == course_id,
+            UserModuleProgress.status == 'completed'
+        ).all()
+        
+        completed_module_ids = {m.module_id for m in completed_modules}
+        
+        # Calculate course progress (total modules across all chapters)
+        total_course_modules = len(all_modules)
+        completed_course_modules = len(completed_module_ids)
+        course_progress = (completed_course_modules / total_course_modules * 100) if total_course_modules > 0 else 0
+        
+        # Calculate chapter progress
+        chapter_progress = []
+        current_chapter = None
+        next_chapter = None
+        
+        for i, chapter in enumerate(chapters):
+            # Get modules in this chapter
+            chapter_modules = [m for m in all_modules if m.chapter_id == chapter.id]
+            total_chapter_modules = len(chapter_modules)
+            
+            # Count completed modules in this chapter
+            completed_chapter_modules = sum(1 for m in chapter_modules if m.id in completed_module_ids)
+            chapter_progress_percentage = (completed_chapter_modules / total_chapter_modules * 100) if total_chapter_modules > 0 else 0
+            
+            is_chapter_complete = chapter_progress_percentage >= 100
+            
+            chapter_progress.append({
+                "chapter_id": chapter.id,
+                "chapter_title": chapter.title,
+                "cover_image_url": chapter.cover_image_url,
+                "order": chapter.order,
+                "total_modules": total_chapter_modules,
+                "completed_modules": completed_chapter_modules,
+                "progress_percentage": chapter_progress_percentage,
+                "is_completed": is_chapter_complete
+            })
+            
+            # Find current chapter (first chapter with modules that has progress < 100%)
+            if not current_chapter and total_chapter_modules > 0 and not is_chapter_complete:
+                current_chapter = {
+                    "chapter_id": chapter.id,
+                    "chapter_title": chapter.title,
+                    "cover_image_url": chapter.cover_image_url,
+                    "order": chapter.order,
+                    "total_modules": total_chapter_modules,
+                    "completed_modules": completed_chapter_modules,
+                    "progress_percentage": chapter_progress_percentage,
+                    "is_completed": is_chapter_complete
+                }
+            
+            # Find next chapter (first chapter after current that has modules)
+            if current_chapter and not next_chapter and i > current_chapter.get("order", 0) and total_chapter_modules > 0:
+                next_chapter = {
+                    "chapter_id": chapter.id,
+                    "chapter_title": chapter.title,
+                    "cover_image_url": chapter.cover_image_url,
+                    "order": chapter.order,
+                    "total_modules": total_chapter_modules,
+                    "completed_modules": completed_chapter_modules,
+                    "progress_percentage": chapter_progress_percentage,
+                    "is_completed": is_chapter_complete
+                }
+        
+        # If all chapters are complete, set next_chapter to None
+        if all(ch["is_completed"] for ch in chapter_progress):
+            next_chapter = None
+        
+        return {
+            "course_id": course_id,
+            "course_progress": {
+                "total_modules": total_course_modules,
+                "completed_modules": completed_course_modules,
+                "progress_percentage": course_progress
+            },
+            "current_chapter": current_chapter,
+            "next_chapter": next_chapter,
+            "chapters": chapter_progress
+        }
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in get_detailed_progress: {e}")
         print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,

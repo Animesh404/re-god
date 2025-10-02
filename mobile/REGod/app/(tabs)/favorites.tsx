@@ -1,21 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, FlatList, ImageSourcePropType } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, FlatList, ImageSourcePropType, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import LessonIndexModal from '@/components/LessonIndexModal';
 import MusicCard from '@/components/MusicCard';
 import ApiService, { type Module, type Chapter } from '../../src/services/api';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { getImageUrl } from '../../src/config/constants';
+import * as WebBrowser from 'expo-web-browser';
 
 // Default placeholder image for fallback
 const defaultChapterImage = require('@/assets/images/logo.png');
 
 // Helper function to convert relative URLs to full URLs
-const getImageUrl = (imageUrl: string | null): any => {
+const getImageUrlWithFallback = (imageUrl: string | null): any => {
   if (!imageUrl) return defaultChapterImage;
-  if (imageUrl.startsWith('http')) return { uri: imageUrl };
-  return { uri: `https://bf5773da486c.ngrok-free.app${imageUrl}` };
+  const fullUrl = getImageUrl(imageUrl);
+  return fullUrl ? { uri: fullUrl } : defaultChapterImage;
 };
 
 // Interfaces for data types
@@ -49,30 +51,52 @@ const favoriteMusic: FavoriteMusic[] = [
 
 export default function FavoritesScreen() {
   const router = useRouter();
-  const { isAuthenticated, loading: authLoading } = useAuth();
+  const { isAuthenticated, loading: authLoading, user } = useAuth();
+  
+  // Check if user is admin or teacher
+  const isAdminOrTeacher = user?.role === 'admin' || user?.role === 'teacher';
   const [favoritedChapters, setFavoritedChapters] = useState<any[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
   const [showLessonModal, setShowLessonModal] = useState(false);
   const [selectedChapter, setSelectedChapter] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [favoriteMusic, setFavoriteMusic] = useState<any[]>([]);
+  
+  // Admin/Teacher responses state
+  const [responses, setResponses] = useState<any[]>([]);
+  const [responsesLoading, setResponsesLoading] = useState(false);
+  const [responsesPage, setResponsesPage] = useState(1);
+  const [hasMoreResponses, setHasMoreResponses] = useState(true);
 
-  useEffect(() => {
-    if (isAuthenticated && !authLoading) {
-      loadFavoritedChapters();
-      loadFavoriteMusic();
-    }
-  }, [isAuthenticated, authLoading]);
+  // Load data when screen comes into focus (when user navigates to this tab)
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthenticated && !authLoading) {
+        console.log('Favorites screen focused - refreshing data');
+        if (isAdminOrTeacher) {
+          loadResponses();
+        } else {
+          loadFavoritedChapters();
+          loadFavoriteMusic();
+        }
+      }
+    }, [isAuthenticated, authLoading, isAdminOrTeacher])
+  );
 
   const loadFavoritedChapters = async () => {
     try {
-      setLoading(true);
+      if (!refreshing) {
+        setLoading(true);
+      }
       const favoritedChaptersData = await ApiService.getChapterFavorites();
       setFavoritedChapters(favoritedChaptersData);
     } catch (error) {
       console.error('Error loading favorited chapters:', error);
     } finally {
-      setLoading(false);
+      if (!refreshing) {
+        setLoading(false);
+      }
     }
   };
 
@@ -117,6 +141,73 @@ export default function FavoritesScreen() {
     }
   };
 
+  const loadResponses = async (page: number = 1, reset: boolean = false) => {
+    try {
+      if (reset) {
+        setResponsesPage(1);
+        setHasMoreResponses(true);
+        setResponsesLoading(true);
+      } else if (page === 1) {
+        setResponsesLoading(true);
+      }
+
+      // TODO: Implement API call to get quiz responses
+      // For now, using mock data
+      const mockResponses = [
+        {
+          id: 1,
+          student_name: 'John Doe',
+          course_title: 'The God You Can Love',
+          chapter_title: 'Chapter 1',
+          module_title: 'Introduction to Love',
+          question: 'What does love mean to you?',
+          answer: 'Love means caring for others and putting their needs before my own.',
+          submitted_at: '2025-01-02T10:30:00Z',
+          module_id: 1,
+          course_id: 4
+        },
+        {
+          id: 2,
+          student_name: 'Jane Smith',
+          course_title: 'The God You Can Love',
+          chapter_title: 'Chapter 1',
+          module_title: 'Understanding Grace',
+          question: 'How has grace impacted your life?',
+          answer: 'Grace has shown me that I am loved despite my mistakes.',
+          submitted_at: '2025-01-02T11:15:00Z',
+          module_id: 2,
+          course_id: 4
+        },
+        {
+          id: 3,
+          student_name: 'Mike Johnson',
+          course_title: 'The God You Can Love',
+          chapter_title: 'Chapter 2',
+          module_title: 'The Nature of God',
+          question: 'True or False: God is always loving.',
+          answer: 'True',
+          submitted_at: '2025-01-02T12:00:00Z',
+          module_id: 3,
+          course_id: 4
+        }
+      ];
+
+      if (reset || page === 1) {
+        setResponses(mockResponses);
+      } else {
+        setResponses(prev => [...prev, ...mockResponses]);
+      }
+
+      // Simulate pagination - in real implementation, check if there are more pages
+      setHasMoreResponses(page < 3); // Mock: 3 pages max
+      setResponsesPage(page);
+    } catch (error) {
+      console.error('Error loading responses:', error);
+    } finally {
+      setResponsesLoading(false);
+    }
+  };
+
   const handleChapterPress = async (chapter: any) => {
     try {
       // Load modules for this chapter
@@ -132,7 +223,7 @@ export default function FavoritesScreen() {
   const handleModulePress = (module: Module) => {
     setShowLessonModal(false);
     router.push({
-      pathname: '/(tabs)/lesson' as any,
+      pathname: '/lesson' as any,
       params: {
         moduleId: module.id.toString(),
         courseId: module.course_id.toString()
@@ -140,13 +231,36 @@ export default function FavoritesScreen() {
     });
   };
 
+  const loadMoreResponses = () => {
+    if (!responsesLoading && hasMoreResponses) {
+      loadResponses(responsesPage + 1, false);
+    }
+  };
+
+  const onRefreshResponses = () => {
+    loadResponses(1, true);
+  };
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      console.log('Manual refresh triggered');
+      await loadFavoritedChapters();
+      await loadFavoriteMusic();
+    } catch (error) {
+      console.error('Error refreshing favorites:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
   const renderChapterItem = ({ item }: { item: any }) => (
     <TouchableOpacity 
       style={styles.chapterItem}
       onPress={() => handleChapterPress(item)}
     >
       <Image 
-        source={getImageUrl(item.cover_image_url)} 
+        source={getImageUrlWithFallback(item.cover_image_url)} 
         style={styles.chapterImage} 
       />
       <View style={styles.chapterTextContainer}>
@@ -195,17 +309,83 @@ export default function FavoritesScreen() {
     </View>
   );
 
+  // Render admin/teacher responses view
+  if (isAdminOrTeacher) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.adminHeader}>
+          <Text style={styles.adminTitle}>Student Responses</Text>
+          <Text style={styles.adminSubtitle}>Review quiz responses from your students</Text>
+        </View>
+        
+        <FlatList
+          data={responses}
+          keyExtractor={(item, index) => `response-${item.id || index}`}
+          renderItem={({ item }) => (
+            <View style={styles.responseCard}>
+              <View style={styles.responseHeader}>
+                <Text style={styles.studentName}>{item.student_name}</Text>
+                <Text style={styles.responseDate}>
+                  {new Date(item.submitted_at).toLocaleDateString()}
+                </Text>
+              </View>
+              <View style={styles.responseContent}>
+                <Text style={styles.courseInfo}>
+                  {item.course_title} - {item.chapter_title}
+                </Text>
+                <Text style={styles.moduleInfo}>{item.module_title}</Text>
+                <Text style={styles.questionText}>Q: {item.question}</Text>
+                <Text style={styles.answerText}>A: {item.answer}</Text>
+              </View>
+            </View>
+          )}
+          onEndReached={loadMoreResponses}
+          onEndReachedThreshold={0.5}
+          refreshControl={
+            <RefreshControl
+              refreshing={responsesLoading}
+              onRefresh={onRefreshResponses}
+              tintColor="#6B8E23"
+              colors={["#6B8E23"]}
+              title="Pull to refresh"
+              titleColor="#6B8E23"
+            />
+          }
+          ListFooterComponent={() => 
+            hasMoreResponses ? (
+              <View style={styles.loadingMore}>
+                <Text style={styles.loadingMoreText}>Loading more responses...</Text>
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={() => (
+            <View style={styles.emptyState}>
+              <Ionicons name="document-text-outline" size={48} color="#ccc" />
+              <Text style={styles.emptyStateText}>No responses yet</Text>
+              <Text style={styles.emptyStateSubtext}>Student responses will appear here as they complete quizzes</Text>
+            </View>
+          )}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // Render student favorites view (existing code)
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerSpacer} />
-          <Text style={styles.headerTitle}>Favorites</Text>
-          <TouchableOpacity>
-            <Ionicons name="menu" size={28} color="black" />
-          </TouchableOpacity>
-        </View>
+      <ScrollView
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#6B8E23"
+            colors={["#6B8E23"]}
+            title="Pull to refresh"
+            titleColor="#6B8E23"
+          />
+        }
+        contentContainerStyle={styles.scrollContent}
+      >
 
         {/* Favorited Chapters Section */}
         <View style={styles.section}>
@@ -227,35 +407,35 @@ export default function FavoritesScreen() {
             </View>
           )}
         </View>
-
-        {/* Music Section */}
-        {favoriteMusic.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Music</Text>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.musicScrollContent}
-            >
-              {favoriteMusic.map(item => (
-                <View key={item.id} style={styles.musicItemContainer}>
-                  <MusicCard 
-                    title={item.title}
-                    mediaUrl={item.mediaUrl}
-                    onPlay={() => {
-                      console.log('Playing music:', item.title);
-                      // Handle play functionality
-                    }}
-                    style={styles.musicCard}
-                  />
-                  <Text style={styles.musicChapterTitle}>{item.chapterTitle}</Text>
-                  <Text style={styles.musicCourseTitle}>{item.courseTitle}</Text>
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        )}
       </ScrollView>
+
+      {/* Music Section - Fixed at bottom above tab bar */}
+      {favoriteMusic.length > 0 && (
+        <View style={styles.musicSection}>
+          <Text style={styles.musicSectionTitle}>Music</Text>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.musicScrollContent}
+          >
+            {favoriteMusic.map(item => (
+              <View key={item.id} style={styles.musicItemContainer}>
+                <MusicCard 
+                  title={item.title}
+                  mediaUrl={item.mediaUrl}
+                  onPlay={() => {
+                    WebBrowser.openBrowserAsync(item.mediaUrl);
+                    // Handle play functionality
+                  }}
+                  style={styles.musicCard}
+                />
+                <Text style={styles.musicChapterTitle}>{item.chapterTitle}</Text>
+                <Text style={styles.musicCourseTitle}>{item.courseTitle}</Text>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
 
       {/* Lesson Modal */}
       <LessonIndexModal
@@ -275,25 +455,7 @@ export default function FavoritesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FBF9F4',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEE',
-  },
-  headerSpacer: {
-    width: 28, // Same width as the menu icon to balance the layout
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    flex: 1,
+    backgroundColor: '#f5f2ec',
   },
   section: {
     marginVertical: 15,
@@ -445,17 +607,47 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
-  // Music section styles
-  musicScrollContent: {
+  // Scroll content with bottom padding for music section
+  scrollContent: {
+    paddingBottom: 120, // Space for music section at bottom
+  },
+  // Music section styles - fixed at bottom
+  musicSection: {
+    position: 'absolute',
+    bottom: 100,
+    left: 0,
+    right: 0,
+    backgroundColor: '#f5f2ec',
+    paddingTop: 15,
+    // paddingBottom: 40,
+    // borderTopWidth: 1,
+    // borderTopColor: '#E8E8E8',
+    // shadowColor: '#000',
+    // shadowOffset: { width: 0, height: -2 },
+    // shadowOpacity: 0.1,
+    // shadowRadius: 4,
+    elevation: 0,
+  },
+  musicSectionTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 10,
     paddingHorizontal: 20,
-    gap: 15,
+    color: '#333',
+  },
+  musicScrollContent: {
+    paddingHorizontal: 10,
+    gap: 1,
   },
   musicItemContainer: {
-    width: 200,
+    width: 300,
+    height: 150,
     marginRight: 15,
+    // marginBottom: 2,
   },
   musicCard: {
-    marginBottom: 8,
+    // marginBottom: 8,
+    height: 150,
   },
   musicChapterTitle: {
     fontSize: 14,
@@ -466,5 +658,82 @@ const styles = StyleSheet.create({
   musicCourseTitle: {
     fontSize: 12,
     color: '#666',
+  },
+
+  // Admin/Teacher responses styles
+  adminHeader: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    backgroundColor: '#f5f2ec',
+  },
+  adminTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#6B8E23',
+    marginBottom: 4,
+  },
+  adminSubtitle: {
+    fontSize: 14,
+    color: '#666',
+  },
+  responseCard: {
+    backgroundColor: 'white',
+    marginHorizontal: 20,
+    marginVertical: 8,
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  responseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  studentName: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  responseDate: {
+    fontSize: 12,
+    color: '#666',
+  },
+  responseContent: {
+    marginTop: 8,
+  },
+  courseInfo: {
+    fontSize: 14,
+    color: '#6B8E23',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  moduleInfo: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 8,
+  },
+  questionText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  answerText: {
+    fontSize: 14,
+    color: '#555',
+    lineHeight: 20,
+  },
+  loadingMore: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  loadingMoreText: {
+    color: '#666',
+    fontSize: 14,
   },
 });

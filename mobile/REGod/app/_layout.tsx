@@ -39,6 +39,11 @@ export default function RootLayout() {
         >
           <Stack.Screen name="index" />
           <Stack.Screen name="auth" />
+          <Stack.Screen name="teacher-code" />
+          <Stack.Screen name="lesson" />
+          <Stack.Screen name="chat" />
+          <Stack.Screen name="notes" />
+          <Stack.Screen name="new-note" />
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="+not-found" />
         </Stack>

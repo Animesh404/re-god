@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ImageSourcePropType, ActivityIndicator, Modal, FlatList, Dimensions, Animated, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, ImageSourcePropType, ActivityIndicator, Modal, FlatList, Dimensions, Animated, StatusBar, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import CircularProgress from '@/components/ui/CircularProgress';
 import LessonIndexModal from '@/components/LessonIndexModal';
 import ApiService, { type Course, type Chapter, type Module, type DashboardResponse } from '../../src/services/api';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { getImageUrl } from '../../src/config/constants';
+import CourseCarousel from '@/components/CourseCarousel';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -25,10 +27,15 @@ interface DashboardCourse {
 }
 
 // Helper function to convert relative URLs to full URLs
-const getImageUrl = (imageUrl: string | null): any => {
-  if (!imageUrl) return defaultChapterImage;
-  if (imageUrl.startsWith('http')) return { uri: imageUrl };
-  return { uri: `https://bf5773da486c.ngrok-free.app${imageUrl}` };
+const getImageUrlWithFallback = (imageUrl: string | null | undefined): any => {
+  // Handle null, undefined, or empty strings
+  if (!imageUrl || imageUrl === 'undefined' || imageUrl.trim() === '') {
+    console.log('No valid image URL provided, using default image');
+    return defaultCourseImage;
+  }
+  
+  const fullUrl = getImageUrl(imageUrl);
+  return fullUrl ? { uri: fullUrl } : defaultCourseImage;
 };
 
 // Default placeholder image for fallback
@@ -52,17 +59,23 @@ interface ChapterCardProps {
 export default function CourseScreen() {
   const router = useRouter();
   const { isAuthenticated, loading: authLoading, user } = useAuth();
+  
+  // Check if user is admin or teacher
+  const isAdminOrTeacher = user?.role === 'admin' || user?.role === 'teacher';
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [modules, setModules] = useState<Module[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [chapterProgress, setChapterProgress] = useState<any[]>([]);
+  const [detailedProgress, setDetailedProgress] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showLessonModal, setShowLessonModal] = useState(false);
+  const [selectedChapterId, setSelectedChapterId] = useState<number | null>(null);
   const [completedLessons, setCompletedLessons] = useState<Set<number>>(new Set());
   const [favoritedChapters, setFavoritedChapters] = useState<Set<number>>(new Set());
   const [currentCourseTitle, setCurrentCourseTitle] = useState<string>('');
   const [currentCourseIndex, setCurrentCourseIndex] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ item: DashboardCourse, index: number | null }> }) => {
     if (viewableItems.length > 0 && viewableItems[0].index !== null) {
@@ -77,6 +90,26 @@ export default function CourseScreen() {
       loadFavoritedChapters();
     }
   }, [isAuthenticated, authLoading, user]);
+
+  // Refresh progress when screen comes into focus (e.g., returning from a lesson)
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthenticated && !authLoading) {
+        console.log('Course screen focused, refreshing progress...');
+        
+        // Update dashboard progress to get latest progress percentages
+        updateDashboardProgress();
+        
+        // Also refresh lesson progress and detailed progress for the current course
+        const currentCourse = dashboard?.available_courses[currentCourseIndex];
+        if (currentCourse) {
+          console.log('Refreshing lesson progress for course:', currentCourse.course_id);
+          loadLessonProgress(currentCourse.course_id);
+          loadDetailedProgress(currentCourse.course_id);
+        }
+      }
+    }, [isAuthenticated, authLoading, currentCourseIndex])
+  );
 
   const loadFavoritedChapters = async () => {
     try {
@@ -111,6 +144,14 @@ export default function CourseScreen() {
       }
 
       const dashboardData = await ApiService.getDashboard();
+      console.log('Initial dashboard data:', {
+        available_courses: dashboardData.available_courses?.map((course: DashboardCourse) => ({
+          course_id: course.course_id,
+          course_title: course.course_title,
+          progress_percentage: course.progress_percentage,
+          overall_progress_percentage: course.overall_progress_percentage
+        }))
+      });
       setDashboard(dashboardData);
 
       // Set the initial course index based on the last visited course
@@ -123,7 +164,13 @@ export default function CourseScreen() {
         }
       }
 
-      // No need to fetch modules/chapters here, the new useEffect will handle it
+      // If we have modules loaded, refresh the lesson progress for the current course
+      if (modules.length > 0 && dashboardData.available_courses.length > 0) {
+        const currentCourse = dashboardData.available_courses[currentCourseIndex];
+        if (currentCourse) {
+          await loadLessonProgress(currentCourse.course_id);
+        }
+      }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load dashboard';
       console.error('Error loading dashboard:', err);
@@ -142,40 +189,53 @@ export default function CourseScreen() {
 
   const loadLessonProgress = async (courseId: number) => {
     try {
-      // Load user progress data - this would come from API in production
-      const progressData = await ApiService.getDashboard(); // This contains progress info
+      console.log('Loading lesson progress for course:', courseId);
+      // Get module progress from the API
+      const moduleProgress = await ApiService.getModuleProgress(courseId);
+      console.log('Received module progress:', moduleProgress);
+      
       const completedSet = new Set<number>();
 
-      // For now, we'll use the progress percentage to estimate completed lessons
-      // In production, this would come from a dedicated progress API
-      if (progressData.last_visited_course?.overall_progress_percentage) {
-        const totalModules = modules.length;
-        const completedCount = Math.floor((progressData.last_visited_course.overall_progress_percentage / 100) * totalModules);
-
-        for (let i = 0; i < Math.min(completedCount, modules.length); i++) {
-          completedSet.add(modules[i].id);
+      // Add completed modules to the set
+      moduleProgress.forEach(progress => {
+        if (progress.completed) {
+          completedSet.add(progress.moduleId);
         }
-      }
+      });
 
       setCompletedLessons(completedSet);
+      console.log('Updated completed lessons:', { courseId, completedModules: Array.from(completedSet) });
     } catch (error) {
       console.error('Error loading lesson progress:', error);
       // Continue without progress data
     }
   };
 
+  const loadDetailedProgress = async (courseId: number) => {
+    try {
+      console.log('Loading detailed progress for course:', courseId);
+      const progress = await ApiService.getDetailedProgress(courseId);
+      console.log('Received detailed progress:', JSON.stringify(progress, null, 2));
+      setDetailedProgress(progress);
+    } catch (error) {
+      console.error('Error loading detailed progress:', error);
+    }
+  };
+
   const handleCoursePress = async (courseId: number) => {
     try {
-      // Load chapters, modules, and chapter progress for the selected course
-      const [courseChapters, courseModules, progressData] = await Promise.all([
+      // Load chapters, modules, chapter progress, and detailed progress for the selected course
+      const [courseChapters, courseModules, progressData, detailedProgressData] = await Promise.all([
         ApiService.getCourseChapters(courseId),
         ApiService.getCourseModules(courseId),
-        ApiService.getChapterProgress(courseId)
+        ApiService.getChapterProgress(courseId),
+        ApiService.getDetailedProgress(courseId)
       ]);
       
       setChapters(courseChapters);
       setModules(courseModules);
       setChapterProgress(progressData.chapters);
+      setDetailedProgress(detailedProgressData);
       
       const course = dashboard?.available_courses.find(c => c.course_id === courseId);
       setCurrentCourseTitle(course?.course_title || `Course ${courseId}`);
@@ -196,7 +256,7 @@ export default function CourseScreen() {
 
       // Navigate to lesson - progress will be updated on completion
       router.push({
-        pathname: '/(tabs)/lesson' as any,
+        pathname: '/lesson' as any,
         params: {
           moduleId: module.id.toString(),
           courseId: module.course_id.toString()
@@ -206,7 +266,7 @@ export default function CourseScreen() {
       console.error('Error accessing lesson:', err);
       // Still allow navigation even if progress update fails
       router.push({
-        pathname: '/(tabs)/lesson' as any,
+        pathname: '/lesson' as any,
         params: {
           moduleId: module.id.toString(),
           courseId: module.course_id.toString()
@@ -215,8 +275,46 @@ export default function CourseScreen() {
     }
   };
 
-  const handleLessonCompleted = (moduleId: number) => {
+  const handleLessonCompleted = async (moduleId: number) => {
     setCompletedLessons(prev => new Set([...prev, moduleId]));
+    
+    // Update dashboard progress to reflect the completion
+    await updateDashboardProgress();
+    
+    // Refresh lesson progress and detailed progress for current course
+    if (dashboard?.available_courses[currentCourseIndex]) {
+      const currentCourse = dashboard.available_courses[currentCourseIndex];
+      await Promise.all([
+        loadLessonProgress(currentCourse.course_id),
+        loadDetailedProgress(currentCourse.course_id)
+      ]);
+    }
+  };
+
+  // Function to refresh progress without affecting carousel
+  const refreshProgressOnly = async () => {
+    if (dashboard?.available_courses[currentCourseIndex]) {
+      const currentCourse = dashboard.available_courses[currentCourseIndex];
+      await loadLessonProgress(currentCourse.course_id);
+    }
+  };
+
+  // Function to update dashboard progress without full reload
+  const updateDashboardProgress = async () => {
+    try {
+      const dashboardData = await ApiService.getDashboard();
+      console.log('Updated dashboard data:', {
+        available_courses: dashboardData.available_courses?.map((course: DashboardCourse) => ({
+          course_id: course.course_id,
+          course_title: course.course_title,
+          progress_percentage: course.progress_percentage,
+          overall_progress_percentage: course.overall_progress_percentage
+        }))
+      });
+      setDashboard(dashboardData);
+    } catch (error) {
+      console.error('Error updating dashboard progress:', error);
+    }
   };
 
   const toggleChapterFavorite = async (chapterId: number, event: any) => {
@@ -280,7 +378,8 @@ export default function CourseScreen() {
     );
   };
 
-  const openLessonModal = () => {
+  const openLessonModal = (chapterId?: number) => {
+    setSelectedChapterId(chapterId || null);
     setShowLessonModal(true);
   };
 
@@ -288,119 +387,276 @@ export default function CourseScreen() {
     setShowLessonModal(false);
   };
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      // Reload dashboard and course data
+      await loadDashboard();
+      await loadFavoritedChapters();
+      
+      // If we have a current course, reload its data too
+      if (dashboard?.available_courses[currentCourseIndex]) {
+        const currentCourse = dashboard.available_courses[currentCourseIndex];
+        await handleCoursePress(currentCourse.course_id);
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [dashboard, currentCourseIndex]);
+
+  // Manual refresh function for progress updates
+  const refreshProgress = useCallback(async () => {
+    if (dashboard?.available_courses[currentCourseIndex]) {
+      const currentCourse = dashboard.available_courses[currentCourseIndex];
+      await loadLessonProgress(currentCourse.course_id);
+    }
+  }, [dashboard, currentCourseIndex]);
+
   if (authLoading || loading) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
         
-        {/* Custom Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Course</Text>
-        </View>
-
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6B8E23" />
           <Text style={styles.loadingText}>
             {authLoading ? 'Authenticating...' : 'Loading courses...'}
           </Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   // Don't render anything if user is not authenticated and auth is still loading
   if (!isAuthenticated && !user) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
         
-        {/* Custom Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Course</Text>
-        </View>
-
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6B8E23" />
           <Text style={styles.loadingText}>Please log in to view courses</Text>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
 
   if (error) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
         
-        {/* Custom Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Course</Text>
-        </View>
-
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>Error: {error}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={loadDashboard}>
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   // Use API data
   const availableCourses = dashboard?.available_courses || [];
 
-  const renderCourseCard = ({ item: course }: { item: DashboardCourse }) => (
-    <View style={styles.courseCard}>
-      <Image
-        source={course.thumbnail_url ? { uri: course.thumbnail_url } : defaultCourseImage}
-        style={styles.courseImage}
-      />
-      <Text style={styles.courseTitle}>{course.course_title}</Text>
-      {/* Progress Circle */}
-      <View style={styles.progressContainer}>
-        <CircularProgress
-          size={90}
-          strokeWidth={8}
-          progress={course.overall_progress_percentage}
-          backgroundColor="#E8E8E8"
-          progressColor="#6B8E23"
-        />
-        <View style={styles.progressTextContainer}>
-          <Text style={styles.progressText}>{course.overall_progress_percentage.toFixed(1)}%</Text>
-        </View>
-        <Text style={styles.progressLabel}>Course Progress</Text>
-      </View>
-    </View>
-  );
+  // Render admin/teacher view
+  if (isAdminOrTeacher) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
+        
+        <ScrollView 
+          style={styles.scrollView}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#6B8E23"
+              colors={["#6B8E23"]}
+              title="Pull to refresh"
+              titleColor="#6B8E23"
+            />
+          }
+        >
+          {/* Admin/Teacher Course Management */}
+          <View style={styles.adminHeader}>
+            <Text style={styles.adminTitle}>My Courses</Text>
+            <Text style={styles.adminSubtitle}>Manage your uploaded courses and chapters</Text>
+          </View>
 
+          {/* Course Cards for Admin/Teacher */}
+          {availableCourses.length > 0 && (
+            <View style={styles.carouselSection}>
+              <CourseCarousel
+                courses={availableCourses}
+                defaultImage={defaultCourseImage}
+                onCourseChange={setCurrentCourseIndex}
+              />
+              {dashboard?.available_courses[currentCourseIndex] && (
+                <View style={styles.courseDetails}>
+                  <Text style={styles.courseTitle}>
+                    {dashboard.available_courses[currentCourseIndex].course_title}
+                  </Text>
+                  <View style={styles.progressContainer}>
+                    <CircularProgress
+                      size={90}
+                      strokeWidth={8}
+                      progress={detailedProgress?.course_progress?.progress_percentage || dashboard.available_courses[currentCourseIndex].progress_percentage}
+                      backgroundColor="#E8E8E8"
+                      progressColor="#6B8E23"
+                    />
+                    <View style={styles.progressTextContainer}>
+                      <Text style={styles.progressText}>
+                        {`${Math.round(detailedProgress?.course_progress?.progress_percentage || dashboard.available_courses[currentCourseIndex].progress_percentage)}%`}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Chapters Section for Admin/Teacher */}
+          <View style={styles.continueSection}>
+            <Text style={styles.continueText}>Chapters</Text>
+            <Text style={styles.continueSubtitle}>Manage course chapters and content</Text>
+          </View>
+
+          {/* Green Background Container */}
+          <View style={styles.greenBackgroundContainer}>
+            <View style={styles.availableCoursesSection}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.scrollViewContent}
+              >
+                {chapterProgress.map((chapterProgress) => (
+                  <TouchableOpacity
+                    key={chapterProgress.chapter_id}
+                    onPress={() => openLessonModal(chapterProgress.chapter_id)}
+                  >
+                    <View style={styles.chapterCard}>
+                      <Image
+                        source={getImageUrlWithFallback(chapterProgress.cover_image_url || null)}
+                        style={styles.chapterImage}
+                        onError={(error) => {
+                          console.log(`❌ Chapter image failed to load for "${chapterProgress.chapter_title}":`, chapterProgress.cover_image_url);
+                        }}
+                        onLoad={() => {
+                          if (chapterProgress.cover_image_url && chapterProgress.cover_image_url !== 'undefined') {
+                            console.log(`✅ Chapter image loaded successfully for "${chapterProgress.chapter_title}"`);
+                          }
+                        }}
+                      />
+                      <View style={styles.chapterTextContainer}>
+                        <Text style={styles.chapterTitle}>{chapterProgress.chapter_title}</Text>
+                        <View style={styles.progressContainer}>
+                          <View style={styles.progressContainer}>
+                            <View 
+                              style={[
+                                styles.progressContainer, 
+                                { width: `${chapterProgress.progress_percentage.toFixed(1)}%` }
+                              ]} 
+                            />
+                          </View>
+                        </View>
+                        <View style={styles.lessonButton}>
+                          <Text style={styles.lessonButtonText}>
+                            Manage Content
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Footer with Green Background */}
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>
+                App Development by Adventech in partnership with TBD...
+              </Text>
+            </View>
+          </View>
+        </ScrollView>
+
+        {/* Lesson Index Modal */}
+        <LessonIndexModal
+          visible={showLessonModal}
+          onClose={closeLessonModal}
+          modules={selectedChapterId ? modules.filter(m => m.chapter_id === selectedChapterId) : modules}
+          courseTitle={currentCourseTitle}
+          onLessonPress={handleModulePress}
+          completedLessons={completedLessons}
+          progressPercentage={
+            selectedChapterId 
+              ? detailedProgress?.chapters?.find((c: any) => c.chapter_id === selectedChapterId)?.progress_percentage || 0
+              : detailedProgress?.course_progress?.progress_percentage || 0
+          }
+          chapterTitle={selectedChapterId ? chapters.find((c: Chapter) => c.id === selectedChapterId)?.title || "Chapter" : "All Lessons"}
+          showChapterProgress={!selectedChapterId}
+          detailedProgress={detailedProgress}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // Render student view (existing code)
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
       
-      {/* Custom Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Course</Text>
-      </View>
-
-      <ScrollView style={styles.scrollView}>
+      <ScrollView 
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#6B8E23"
+            colors={["#6B8E23"]}
+            title="Pull to refresh"
+            titleColor="#6B8E23"
+          />
+        }
+      >
 
         {/* Course Card Carousel */}
         {availableCourses.length > 0 && (
-          <FlatList<DashboardCourse>
-            data={availableCourses as DashboardCourse[]}
-            renderItem={renderCourseCard}
-            keyExtractor={(item) => item.course_id.toString()}
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            onViewableItemsChanged={onViewableItemsChanged}
-            viewabilityConfig={{
-              itemVisiblePercentThreshold: 50,
-            }}
-            style={styles.courseCarousel}
-          />
+          <View style={styles.carouselSection}>
+            <CourseCarousel
+              courses={availableCourses}
+              defaultImage={defaultCourseImage}
+              onCourseChange={setCurrentCourseIndex}
+            />
+            {dashboard?.available_courses[currentCourseIndex] && (
+                <View style={styles.courseDetails}>
+                    <Text style={styles.courseTitle}>
+                        {dashboard.available_courses[currentCourseIndex].course_title}
+                    </Text>
+                    <View style={styles.progressContainer}>
+                        <CircularProgress
+                            size={90}
+                            strokeWidth={8}
+                            progress={detailedProgress?.course_progress?.progress_percentage || dashboard.available_courses[currentCourseIndex].progress_percentage}
+                            backgroundColor="#E8E8E8"
+                            progressColor="#6B8E23"
+                        />
+                        <View style={styles.progressTextContainer}>
+                            <Text style={styles.progressText}>
+                                {`${Math.round(detailedProgress?.course_progress?.progress_percentage || dashboard.available_courses[currentCourseIndex].progress_percentage)}%`}
+                            </Text>
+                        </View>
+                    </View>
+                    {/* <Text style={styles.progressLabel}>
+                        Course Progress ({detailedProgress?.course_progress?.completed_modules || 0}/{detailedProgress?.course_progress?.total_modules || 0} modules)
+                    </Text> */}
+                </View>
+            )}
+          </View>
         )}
 
         {/* Continue Section with Green Background */}
@@ -421,8 +677,16 @@ export default function CourseScreen() {
               >
                 {/* Show current chapter with module progress */}
                 {(() => {
-                  // Find the current chapter (first incomplete or last chapter)
-                  const currentChapter = chapterProgress.find(ch => !ch.is_completed) || chapterProgress[chapterProgress.length - 1];
+                  // Use detailed progress data if available, otherwise fall back to chapter progress
+                  const currentChapter = detailedProgress?.current_chapter || chapterProgress.find(ch => !ch.is_completed) || chapterProgress[chapterProgress.length - 1];
+                  const nextChapter = detailedProgress?.next_chapter;
+                  
+                  console.log('Continue card debug:', {
+                    detailedProgress: detailedProgress,
+                    currentChapter: currentChapter,
+                    nextChapter: nextChapter,
+                    chapterProgress: chapterProgress
+                  });
                   
                   // If no chapter progress data, try to show continue card from dashboard data
                   if (!currentChapter && dashboard?.last_visited_course) {
@@ -441,7 +705,7 @@ export default function CourseScreen() {
                             style={styles.continueCard}
                           >
                             <Image
-                              source={getImageUrl(dashboard.last_visited_course.thumbnail_url || null)}
+                              source={getImageUrlWithFallback(dashboard.last_visited_course.thumbnail_url || null)}
                               style={styles.continueCardImage}
                             />
                             <View style={styles.continueCardOverlay} />
@@ -458,10 +722,10 @@ export default function CourseScreen() {
                                   {dashboard.last_visited_course.overall_progress_percentage.toFixed(1)}%
                                 </Text>
                               </View>
-                              <Text style={styles.continueCardTitle}>{dashboard.last_visited_course.course_title}</Text>
+                              {/* <Text style={styles.continueCardTitle}>{dashboard.last_visited_course.course_title}</Text>
                               <Text style={styles.continueCardTitle}>
                                 Continue: {targetModule.title}
-                              </Text>
+                              </Text> */}
                             </View>
                           </TouchableOpacity>
                         );
@@ -493,11 +757,32 @@ export default function CourseScreen() {
                   //   }))
                   // });
                   
-                  const targetModule = lastVisitedModule 
-                    ? modules.find(m => m.id === lastVisitedModule)
-                    : currentChapter.next_module 
-                      ? modules.find(m => m.id === currentChapter.next_module.id)
-                      : modules.find(m => !completedLessons.has(m.id)); // Fallback to first incomplete module
+                  // Determine which chapter to show and what module to target
+                  const displayChapter = currentChapter?.is_completed && nextChapter ? nextChapter : currentChapter;
+                  
+                  console.log('Display chapter debug:', {
+                    displayChapter: displayChapter,
+                    currentChapter: currentChapter,
+                    nextChapter: nextChapter,
+                    isCurrentCompleted: currentChapter?.is_completed
+                  });
+                  // Find the next incomplete module in the current chapter (sorted by order)
+                  const currentChapterModules = modules
+                    .filter(m => m.chapter_id === displayChapter?.chapter_id)
+                    .sort((a, b) => a.order - b.order);
+                  const nextIncompleteModule = currentChapterModules.find(m => !completedLessons.has(m.id));
+                  
+                  // Use next incomplete module, or fallback to last visited if no incomplete modules
+                  const targetModule = nextIncompleteModule || 
+                    (lastVisitedModule ? modules.find(m => m.id === lastVisitedModule) : null) ||
+                    modules.sort((a, b) => a.order - b.order).find(m => !completedLessons.has(m.id)); // Final fallback to any incomplete module
+                  
+                  console.log('Target module selection:', {
+                    currentChapterModules: currentChapterModules.map(m => ({ id: m.id, title: m.title, completed: completedLessons.has(m.id) })),
+                    nextIncompleteModule: nextIncompleteModule ? { id: nextIncompleteModule.id, title: nextIncompleteModule.title } : null,
+                    lastVisitedModule,
+                    targetModule: targetModule ? { id: targetModule.id, title: targetModule.title } : null
+                  });
                   
                   // console.log('Target module:', targetModule);
 
@@ -511,8 +796,16 @@ export default function CourseScreen() {
                       style={styles.continueCard}
                     >
                       <Image
-                        source={getImageUrl(currentChapter.cover_image_url || null)}
+                        source={getImageUrlWithFallback(displayChapter?.cover_image_url || null)}
                         style={styles.continueCardImage}
+                        onError={(error) => {
+                          console.log(`❌ Continue card image failed to load for "${displayChapter?.chapter_title}":`, displayChapter?.cover_image_url);
+                        }}
+                        onLoad={() => {
+                          if (displayChapter?.cover_image_url && displayChapter?.cover_image_url !== 'undefined') {
+                            console.log(`✅ Continue card image loaded successfully for "${displayChapter?.chapter_title}"`);
+                          }
+                        }}
                       />
                       <View style={styles.continueCardOverlay} />
                       <View style={styles.continueCardContent}>
@@ -520,23 +813,25 @@ export default function CourseScreen() {
                           <CircularProgress
                             size={50}
                             strokeWidth={4}
-                            progress={currentChapter.progress_percentage}
+                            progress={displayChapter?.progress_percentage || 0}
                             backgroundColor="rgba(255, 255, 255, 0.45)"
                             progressColor="#FFFFFF"
                           />
                           <Text style={styles.continueProgressText}>
-                            {currentChapter.progress_percentage.toFixed(1)}%
+                            {displayChapter?.progress_percentage?.toFixed(1) || 0}%
                           </Text>
                         </View>
-                        <Text style={styles.continueCardTitle}>{currentChapter.chapter_title}</Text>
-                        {/* <Text style={styles.continueCardTitle}>
-                          {currentChapter.completed_modules}/{currentChapter.total_modules} modules completed
-                        </Text> */}
-                        {targetModule && (
+                        <Text style={styles.continueCardTitle}>
+                          {currentChapter?.is_completed && nextChapter ? `Next: ${nextChapter.chapter_title}` : displayChapter?.chapter_title}
+                        </Text>
+                        {/* {targetModule && (
                           <Text style={styles.continueCardTitle}>
-                            {lastVisitedModule ? 'Continue: ' : currentChapter.next_module ? 'Next: ' : 'Start: '}{targetModule.title}
+                            {nextIncompleteModule ? 'Continue: ' : 'Start: '}{targetModule.title}
                           </Text>
                         )}
+                        <Text style={styles.continueCardSubtitle}>
+                          {displayChapter?.completed_modules || 0}/{displayChapter?.total_modules || 0} modules
+                        </Text> */}
                       </View>
                     </TouchableOpacity>
                   );
@@ -564,12 +859,20 @@ export default function CourseScreen() {
               {chapterProgress.map((chapterProgress) => (
                 <TouchableOpacity
                   key={chapterProgress.chapter_id}
-                  onPress={openLessonModal}
+                  onPress={() => openLessonModal(chapterProgress.chapter_id)}
                 >
                   <View style={styles.chapterCard}>
                     <Image
-                      source={getImageUrl(chapterProgress.cover_image_url || null)}
+                      source={getImageUrlWithFallback(chapterProgress.cover_image_url || null)}
                       style={styles.chapterImage}
+                      onError={(error) => {
+                        console.log(`❌ Chapter image failed to load for "${chapterProgress.chapter_title}":`, chapterProgress.cover_image_url);
+                      }}
+                      onLoad={() => {
+                        if (chapterProgress.cover_image_url && chapterProgress.cover_image_url !== 'undefined') {
+                          console.log(`✅ Chapter image loaded successfully for "${chapterProgress.chapter_title}"`);
+                        }
+                      }}
                     />
                     {/* Heart Icon */}
                     <AnimatedHeart chapterId={chapterProgress.chapter_id} />
@@ -613,59 +916,38 @@ export default function CourseScreen() {
       <LessonIndexModal
         visible={showLessonModal}
         onClose={closeLessonModal}
-        modules={modules}
+        modules={selectedChapterId ? modules.filter(m => m.chapter_id === selectedChapterId) : modules}
         courseTitle={currentCourseTitle}
         onLessonPress={handleModulePress}
         completedLessons={completedLessons}
-        progressPercentage={chapterProgress.length > 0 ? chapterProgress[0]?.progress_percentage || 0 : 0}
-        chapterTitle="Complete"
+        progressPercentage={
+          selectedChapterId 
+            ? detailedProgress?.chapters?.find((c: any) => c.chapter_id === selectedChapterId)?.progress_percentage || 0
+            : detailedProgress?.course_progress?.progress_percentage || 0
+        }
+        chapterTitle={selectedChapterId ? chapters.find((c: Chapter) => c.id === selectedChapterId)?.title || "Chapter" : "All Lessons"}
+        showChapterProgress={!selectedChapterId} // Only show chapter progress when showing all chapters
+        detailedProgress={detailedProgress}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FBF9F4',
+    backgroundColor: '#f5f2ec',
   },
-  header: {
-    flexDirection: 'row',
+  carouselSection: {
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingTop: 60, // Account for status bar
-    paddingBottom: 15,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)', // Light translucent background
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1000,
+    paddingVertical: 20,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    textAlign: 'center',
+  courseDetails: {
+    alignItems: 'center',
+    marginTop: 20,
   },
   scrollView: {
     flex: 1,
-    paddingTop: 100, // Account for header height
-  },
-  courseCarousel: {
-    maxHeight: 450, // Adjust as needed
-  },
-  courseCard: {
-    width: screenWidth,
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    paddingTop: 10,
-  },
-  courseImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: 12,
-    marginBottom: 15,
   },
   courseTitle: {
     fontSize: 24,
@@ -872,6 +1154,16 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
+  continueCardSubtitle: {
+    color: 'white',
+    fontSize: 12,
+    textAlign: 'center',
+    opacity: 0.9,
+    marginTop: 4,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
 
   // Lesson Index Button
   lessonIndexButton: {
@@ -908,5 +1200,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // Admin/Teacher styles
+  adminHeader: {
+    paddingHorizontal: 20,
+    paddingVertical: 30,
+    alignItems: 'center',
+  },
+  adminTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#6B8E23',
+    marginBottom: 8,
+  },
+  adminSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
   },
 });

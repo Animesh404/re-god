@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth as useClerkAuth, useUser } from '@clerk/clerk-expo';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import * as Crypto from 'expo-crypto';
+import { router } from 'expo-router';
 import ApiService, { type User } from '../services/api';
 
 // Configure WebBrowser for OAuth
@@ -26,10 +27,11 @@ interface AuthContextType {
   logout: () => Promise<void>;
   error: string | null;
   clearError: () => void;
-  socialLogin: (provider: 'google' | 'apple' | 'facebook') => Promise<void>;
+  socialLogin: (provider: 'google' | 'apple' | 'facebook', teacherCode?: string) => Promise<void>;
   refreshUserData: () => Promise<void>;
   debugJWT: () => Promise<any>;
   migrateFromClerk: () => Promise<boolean>;
+  checkTeacherAssignment: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -50,13 +52,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const authenticationInProgress = useRef(false);
   
   // Clerk hooks
   const { signOut, getToken } = useClerkAuth();
   const { user: clerkUser, isSignedIn } = useUser();
 
   useEffect(() => {
-    checkAuthStatus();
     // Set up periodic token refresh check (every 5 minutes)
     const tokenRefreshInterval = setInterval(async () => {
       const token = await AsyncStorage.getItem('regod_access_token');
@@ -79,219 +82,149 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return () => clearInterval(tokenRefreshInterval);
   }, []);
 
-  // Sync with Clerk user state
+  // Single unified authentication flow
   useEffect(() => {
-    const syncClerkUser = async () => {
+    // Only log when there's a meaningful state change
+    if (isSignedIn !== undefined) {
+      console.log('🔄 Auth state change - isSignedIn:', isSignedIn, 'clerkUser:', !!clerkUser, 'user:', !!user, 'loading:', loading);
+    }
+    
+    const handleAuthStateChange = async () => {
       if (isSignedIn && clerkUser) {
-        setLoading(true);
-        try {
-          await syncUserWithClerk();
-        } finally {
-          setLoading(false);
+        // Only authenticate if we don't already have a user and we're not already authenticating
+        if (!user && !authenticationInProgress.current) {
+          console.log('🚀 Starting authentication flow...');
+          authenticationInProgress.current = true;
+          setLoading(true);
+          try {
+            // Try to get stored user data first (fast path)
+            const storedUserData = await AsyncStorage.getItem('regod_user_data');
+            const storedTokens = await AsyncStorage.getItem('regod_access_token');
+            
+            if (storedUserData && storedTokens) {
+              try {
+                const parsedUser = JSON.parse(storedUserData);
+                setUser(parsedUser);
+                console.log('Using stored user data');
+                setLoading(false);
+                authenticationInProgress.current = false;
+                return; // Skip authentication if we have valid stored data
+              } catch (e) {
+                console.log('Invalid stored user data, proceeding with authentication');
+              }
+            }
+            
+            // No valid stored data, proceed with Clerk authentication
+            console.log('No stored data found, proceeding with authentication...');
+            
+            // Do the authentication logic directly here instead of calling syncUserWithClerk
+            const email = clerkUser.primaryEmailAddress?.emailAddress || '';
+            
+            // Prefer Clerk JWT (template) for backend API calls; fallback to session token
+            let sessionToken: string | null = null;
+            try {
+              sessionToken = (await getToken({ template: 'regod-backend' } as any)) || null;
+            } catch (e) {
+              // Template token might not be available; fallback to session token
+              sessionToken = (await getToken()) || null;
+            }
+
+            if (sessionToken) {
+              await ApiService.setClerkToken(sessionToken);
+              console.log('Clerk token obtained and stored');
+            } else {
+              console.warn('No Clerk token available from getToken');
+            }
+
+            // Try Clerk exchange first to get JWT tokens
+            try {
+              console.log('Attempting Clerk exchange to get JWT tokens...');
+              const exchangeResponse = await ApiService.clerkExchange(email);
+              
+              // Store the JWT tokens from exchange
+              await AsyncStorage.setItem('regod_access_token', exchangeResponse.auth_token);
+              await AsyncStorage.setItem('regod_refresh_token', exchangeResponse.refresh_token);
+              
+              // Use the user data from exchange or fetch profile
+              if (exchangeResponse.user_data) {
+                setUser(exchangeResponse.user_data);
+                await AsyncStorage.setItem('regod_user_data', JSON.stringify(exchangeResponse.user_data));
+                console.log('User migrated to JWT tokens via Clerk exchange:', exchangeResponse.user_data);
+              } else {
+                // Fetch profile with new JWT token
+                const profile = await ApiService.getProfile();
+                setUser(profile);
+                await AsyncStorage.setItem('regod_user_data', JSON.stringify(profile));
+                console.log('User profile fetched after Clerk exchange:', profile);
+              }
+              
+              console.log('Authentication complete, user should be navigated to main app');
+              
+              // Force a state update to trigger re-renders
+              setLoading(false);
+              
+              // Direct navigation as fallback
+              try {
+                console.log('Attempting direct navigation to main app...');
+                router.replace('/(tabs)/course');
+                console.log('Direct navigation initiated');
+              } catch (navError) {
+                console.error('Direct navigation failed:', navError);
+              }
+              
+              // Clear Clerk token since we now have JWT tokens
+              await AsyncStorage.removeItem('clerk_session_token');
+              
+            } catch (exchangeError) {
+              console.error('Clerk exchange failed:', exchangeError);
+              
+              // Try direct profile fetch with Clerk token
+              try {
+                const profile = await ApiService.getProfile();
+                setUser(profile);
+                await AsyncStorage.setItem('regod_user_data', JSON.stringify(profile));
+                console.log('User profile synced with Clerk token:', profile);
+              } catch (profileError) {
+                console.error('Profile fetch also failed:', profileError);
+
+                // Final fallback to basic Clerk user data
+                const clerkUserData = {
+                  id: clerkUser.id,
+                  email: email,
+                  name: clerkUser.fullName || 
+                        (clerkUser.firstName && clerkUser.lastName ? `${clerkUser.firstName} ${clerkUser.lastName}` : '') ||
+                        clerkUser.firstName || 
+                        email.split('@')[0] || 
+                        'User',
+                  role: 'student',
+                  verified: clerkUser.emailAddresses.some(e => e.verification?.status === 'verified'),
+                };
+
+                setUser(clerkUserData);
+                await AsyncStorage.setItem('regod_user_data', JSON.stringify(clerkUserData));
+                console.log('Using fallback Clerk user data:', clerkUserData);
+              }
+            }
+          } finally {
+            setLoading(false);
+            authenticationInProgress.current = false;
+          }
         }
       } else if (!isSignedIn) {
         setUser(null);
         ApiService.clearTokens();
         setLoading(false);
+        authenticationInProgress.current = false;
       }
     };
     
-    syncClerkUser();
-  }, [isSignedIn, clerkUser]);
+    handleAuthStateChange();
+  }, [isSignedIn, clerkUser, user]); // Include user to prevent unnecessary re-authentication
 
-  // Check for stored tokens when component mounts or when Clerk state changes
-  useEffect(() => {
-    if (isSignedIn && clerkUser && !user) {
-      checkAuthStatus();
-    }
-  }, [isSignedIn, clerkUser, user]);
-
-  const checkAuthStatus = async () => {
-    if (loading) return; // Prevent multiple simultaneous calls
-
-    try {
-      setLoading(true);
-      
-      // First, check if we have stored user data (fastest check)
-      const storedUserData = await AsyncStorage.getItem('regod_user_data');
-      if (storedUserData) {
-        try {
-          const userData = JSON.parse(storedUserData);
-          setUser(userData);
-          console.log('User loaded from stored data');
-        } catch (e) {
-          console.log('Failed to parse stored user data');
-        }
-      }
-      
-      // Check for JWT tokens (priority)
-      const accessToken = await AsyncStorage.getItem('regod_access_token');
-      if (accessToken) {
-        try {
-          // Try to get user profile to verify token is still valid
-          const profile = await ApiService.getProfile();
-          setUser(profile);
-          await AsyncStorage.setItem('regod_user_data', JSON.stringify(profile));
-          console.log('User authenticated with JWT tokens');
-          return;
-        } catch (error: any) {
-          console.log('JWT token invalid, clearing and checking other auth methods:', error.message);
-          // Clear invalid JWT tokens
-          await AsyncStorage.removeItem('regod_access_token');
-          await AsyncStorage.removeItem('regod_refresh_token');
-        }
-      }
-
-      // Check for refresh token
-      const refreshToken = await AsyncStorage.getItem('regod_refresh_token');
-      if (refreshToken) {
-        try {
-          console.log('Attempting to refresh access token...');
-          const newToken = await ApiService.refreshTokenIfNeeded();
-          if (newToken) {
-            const profile = await ApiService.getProfile();
-            setUser(profile);
-            await AsyncStorage.setItem('regod_user_data', JSON.stringify(profile));
-            console.log('User authenticated with refreshed token');
-            return;
-          }
-        } catch (error) {
-          console.log('Token refresh failed:', error);
-          await AsyncStorage.removeItem('regod_refresh_token');
-        }
-      }
-
-      // Fallback to Clerk if signed in (for migration)
-      if (isSignedIn && clerkUser) {
-        console.log('No valid JWT tokens, but Clerk is signed in - attempting migration...');
-        try {
-          await syncUserWithClerk();
-          return;
-        } catch (error) {
-          console.log('Clerk sync failed:', error);
-          // If migration fails, still try to use Clerk token directly
-          try {
-            const profile = await ApiService.getProfile();
-            setUser(profile);
-            await AsyncStorage.setItem('regod_user_data', JSON.stringify(profile));
-            console.log('Using Clerk token directly (migration failed)');
-            return;
-          } catch (profileError) {
-            console.log('Profile fetch with Clerk token also failed:', profileError);
-          }
-        }
-      }
-
-      // No valid authentication found
-      console.log('No valid authentication found, clearing all data');
-      setUser(null);
-      await ApiService.clearTokens();
-      await AsyncStorage.removeItem('regod_user_data');
-      
-    } catch (error) {
-      console.error('Auth check failed:', error);
-      setUser(null);
-      await ApiService.clearTokens();
-      await AsyncStorage.removeItem('regod_user_data');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const syncUserWithClerk = async () => {
-    try {
-      if (!clerkUser) return;
-
-      const email = clerkUser.primaryEmailAddress?.emailAddress || '';
-
-          // Prefer Clerk JWT (template) for backend API calls; fallback to session token
-          let sessionToken: string | null = null;
-          try {
-            sessionToken = (await getToken({ template: 'regod-backend' } as any)) || null;
-          } catch (e) {
-            // Template token might not be available; fallback to session token
-            sessionToken = (await getToken()) || null;
-          }
-
-          if (sessionToken) {
-            await ApiService.setClerkToken(sessionToken);
-            console.log('Clerk token obtained and stored');
-          } else {
-            console.warn('No Clerk token available from getToken');
-          }
-
-        // Try Clerk exchange first to get JWT tokens
-        try {
-          console.log('Attempting Clerk exchange to get JWT tokens...');
-          const exchangeResponse = await ApiService.clerkExchange(email);
-          
-          // Store the JWT tokens from exchange
-          await AsyncStorage.setItem('regod_access_token', exchangeResponse.auth_token);
-          await AsyncStorage.setItem('regod_refresh_token', exchangeResponse.refresh_token);
-          
-          // Use the user data from exchange or fetch profile
-          if (exchangeResponse.user_data) {
-            setUser(exchangeResponse.user_data);
-            await AsyncStorage.setItem('regod_user_data', JSON.stringify(exchangeResponse.user_data));
-            console.log('User migrated to JWT tokens via Clerk exchange:', exchangeResponse.user_data);
-          } else {
-            // Fetch profile with new JWT token
-            const profile = await ApiService.getProfile();
-            setUser(profile);
-            await AsyncStorage.setItem('regod_user_data', JSON.stringify(profile));
-            console.log('User profile fetched after Clerk exchange:', profile);
-          }
-          
-          // Clear Clerk token since we now have JWT tokens
-          await AsyncStorage.removeItem('clerk_session_token');
-          
-        } catch (exchangeError) {
-          console.error('Clerk exchange failed:', exchangeError);
-          
-          // Try direct profile fetch with Clerk token
-          try {
-            const profile = await ApiService.getProfile();
-            setUser(profile);
-            await AsyncStorage.setItem('regod_user_data', JSON.stringify(profile));
-            console.log('User profile synced with Clerk token:', profile);
-          } catch (profileError) {
-            console.error('Profile fetch also failed:', profileError);
-
-            // Final fallback to basic Clerk user data
-            const clerkUserData = {
-              id: clerkUser.id,
-              email: email,
-              name: clerkUser.fullName || 
-                    (clerkUser.firstName && clerkUser.lastName ? `${clerkUser.firstName} ${clerkUser.lastName}` : '') ||
-                    clerkUser.firstName || 
-                    email.split('@')[0] || 
-                    'User',
-              role: 'student',
-              verified: clerkUser.emailAddresses.some(e => e.verification?.status === 'verified'),
-            };
-
-            setUser(clerkUserData);
-            await AsyncStorage.setItem('regod_user_data', JSON.stringify(clerkUserData));
-            console.log('Using fallback Clerk user data:', clerkUserData);
-          }
-        }
-      
-      // Store user data in AsyncStorage for offline access
-      const userData = user || {
-        id: clerkUser.id,
-        email: email,
-        name: clerkUser.fullName || 
-              (clerkUser.firstName && clerkUser.lastName ? `${clerkUser.firstName} ${clerkUser.lastName}` : '') ||
-              clerkUser.firstName || 
-              email.split('@')[0] || 
-              'User',
-        role: 'student',
-        verified: clerkUser.emailAddresses.some(e => e.verification?.status === 'verified'),
-      };
-      await AsyncStorage.setItem('regod_user_data', JSON.stringify(userData));
-    } catch (error) {
-      console.error('Error syncing user with Clerk:', error);
-    }
+    console.log('🚫 syncUserWithClerk is disabled - authentication handled in useEffect');
+    return; // Function disabled - authentication is now handled directly in useEffect
   };
 
   const login = async (email: string, password: string) => {
@@ -357,7 +290,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // If teacher code was provided, use it after successful registration
         if (teacherCode) {
           try {
-            await ApiService.useTeacherCode(teacherCode);
+            await ApiService.applyTeacherCode(teacherCode);
             // Refresh profile to get updated access
             const updatedProfile = await ApiService.getProfile();
             setUser(updatedProfile);
@@ -392,38 +325,67 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const logout = async () => {
+    console.log('Logout initiated, setting loading to true');
     setLoading(true);
     try {
       // Sign out from Clerk if signed in
       if (isSignedIn) {
+        console.log('Signing out from Clerk...');
         await signOut();
       }
       
-      // Clear all tokens and user data
-      await ApiService.clearTokens();
-      await AsyncStorage.removeItem('regod_user_data');
+      // Clear all tokens and user data on explicit logout
+      console.log('Clearing tokens and user data...');
+      await ApiService.clearTokensOnLogout();
       setUser(null);
       
-      console.log('Logout successful');
+      console.log('Logout successful, user set to null');
+      
+      // Direct navigation to auth screen after logout
+      try {
+        console.log('Attempting direct navigation to auth screen after logout...');
+        router.replace('/auth');
+        console.log('Direct navigation to auth screen initiated');
+      } catch (navError) {
+        console.error('Direct navigation to auth screen failed:', navError);
+      }
     } catch (error) {
       console.error('Logout error:', error);
       // Even if logout fails, clear local state
       setUser(null);
-      await ApiService.clearTokens();
-      await AsyncStorage.removeItem('regod_user_data');
+      await ApiService.clearTokensOnLogout();
+      
+      // Direct navigation to auth screen even on error
+      try {
+        console.log('Attempting direct navigation to auth screen after logout error...');
+        router.replace('/auth');
+        console.log('Direct navigation to auth screen initiated (error case)');
+      } catch (navError) {
+        console.error('Direct navigation to auth screen failed (error case):', navError);
+      }
     } finally {
+      console.log('Logout complete, setting loading to false');
       setLoading(false);
     }
   };
 
-  const socialLogin = async (provider: 'google' | 'apple' | 'facebook') => {
+  const socialLogin = async (provider: 'google' | 'apple' | 'facebook', teacherCode?: string) => {
     try {
       setError(null);
       setLoading(true);
 
-      // For now, show a placeholder message until social login is fully implemented
-      throw new Error(`${provider} login is not yet implemented. Please use email/password authentication.`);
+      console.log(`Starting ${provider} login...`);
+      
+      // Note: Social login implementation requires proper OAuth configuration
+      // For now, we'll provide a helpful message
+      throw new Error(
+        `Social login with ${provider} requires OAuth configuration. ` +
+        `Please configure ${provider} OAuth credentials in Clerk Dashboard first, ` +
+        `then use the warmUpOAuth() hook in the auth screen component.`
+      );
+      
     } catch (err) {
+      console.error(`${provider} login error:`, err);
       const errorMessage = err instanceof Error ? err.message : `${provider} login failed`;
       setError(errorMessage);
       throw err;
@@ -432,9 +394,60 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const checkTeacherAssignment = async (): Promise<boolean> => {
+    try {
+      const assignment = await ApiService.checkTeacherAssignment();
+      return assignment.has_teacher;
+    } catch (error) {
+      console.error('Error checking teacher assignment:', error);
+      return false;
+    }
+  };
+
   const refreshUserData = async () => {
     try {
-      await syncUserWithClerk();
+      if (!clerkUser || !isSignedIn) {
+        console.log('No Clerk user or not signed in, cannot refresh');
+        return;
+      }
+
+      // Clear existing data and re-authenticate
+      await ApiService.clearTokens();
+      await AsyncStorage.removeItem('regod_user_data');
+      
+      // Re-run authentication flow
+      const email = clerkUser.primaryEmailAddress?.emailAddress || '';
+      
+      // Get Clerk token
+      let sessionToken: string | null = null;
+      try {
+        sessionToken = (await getToken({ template: 'regod-backend' } as any)) || null;
+      } catch (e) {
+        sessionToken = (await getToken()) || null;
+      }
+
+      if (sessionToken) {
+        await ApiService.setClerkToken(sessionToken);
+        console.log('Clerk token refreshed and stored');
+        
+        // Try Clerk exchange
+        try {
+          const exchangeResponse = await ApiService.clerkExchange(email);
+          
+          await AsyncStorage.setItem('regod_access_token', exchangeResponse.auth_token);
+          await AsyncStorage.setItem('regod_refresh_token', exchangeResponse.refresh_token);
+          
+          if (exchangeResponse.user_data) {
+            setUser(exchangeResponse.user_data);
+            await AsyncStorage.setItem('regod_user_data', JSON.stringify(exchangeResponse.user_data));
+            console.log('User data refreshed via Clerk exchange');
+          }
+          
+          await AsyncStorage.removeItem('clerk_session_token');
+        } catch (exchangeError) {
+          console.error('Clerk exchange failed during refresh:', exchangeError);
+        }
+      }
     } catch (error) {
       console.error('Error refreshing user data:', error);
     }
@@ -514,9 +527,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setError(null);
   };
 
+  const isAuthenticated = !!user;
+  
+  // Debug logging for authentication state
+  useEffect(() => {
+    console.log('AuthContext state change - user:', !!user, 'isAuthenticated:', isAuthenticated, 'loading:', loading);
+  }, [user, isAuthenticated, loading]);
+
   const value: AuthContextType = {
     user,
-    isAuthenticated: !!user,  // Only consider user authenticated if we have user data
+    isAuthenticated,
     loading,
     login,
     register,
@@ -527,6 +547,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     refreshUserData,
     debugJWT,
     migrateFromClerk,
+    checkTeacherAssignment,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

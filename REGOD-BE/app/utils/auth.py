@@ -228,7 +228,8 @@ async def get_current_user(
             "name": user.name,
             "role": role,
             "verified": user.is_verified,
-            "clerk_user_id": user.clerk_user_id  # Store Clerk ID for reference
+            "clerk_user_id": user.clerk_user_id,  # Store Clerk ID for reference
+            "avatar_url": user.avatar_url  # Include avatar URL from database
         }
         
     except HTTPException:
