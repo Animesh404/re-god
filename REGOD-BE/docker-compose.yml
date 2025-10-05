@@ -1,32 +1,53 @@
 services:
+  # Init container to create admin user after database is ready
+  init-admin:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/regod
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - NODE_ENV=development
+      - CLERK_API_KEY=sk_test_CSiSTMsbdk780KE3q5ietQu0vzrWqyqcf5QcY2pJR4
+      - CLERK_WEBHOOK_SECRET=whsec_0W4nP3ARqYanM0/vrBBEvevqDb/XzPLa
+      - CLERK_JWKS_URL=https://divine-urchin-82.clerk.accounts.dev/.well-known/jwks.json
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:19006}
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/regod-env  # Exclude virtual env from volume
+    command: python scripts/create_admin.py
+    restart: "no"
+
   api:
     build: .
     ports:
       - "4000:4000"
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/regod
-      - REDIS_URL=redis://redis:6379
       - JWT_SECRET=your-super-secret-jwt-key-change-in-production
       - NODE_ENV=development
       - CLERK_API_KEY=sk_test_CSiSTMsbdk780KE3q5ietQu0vzrWqyqcf5QcY2pJR4
       - CLERK_WEBHOOK_SECRET=whsec_0W4nP3ARqYanM0/vrBBEvevqDb/XzPLa
       - CLERK_JWKS_URL=https://divine-urchin-82.clerk.accounts.dev/.well-known/jwks.json
-      - CORS_ORIGINS=${CORS_ORIGINS:-https://saint-bennett-attachment-quizzes.trycloudflare.com,http://localhost:3000,http://localhost:19006}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:19006}
     env_file:
       - .env
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_healthy
+      init-admin:
+        condition: service_completed_successfully
     volumes:
       - .:/app
       - /app/regod-env  # Exclude virtual env from volume
-    command: uvicorn main:app --host 0.0.0.0 --port 4000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 4000 --reload
     restart: unless-stopped
 
   db:
-    image: postgres:15
+    image: quay.io/tembo/pgmq-pg:latest
     environment:
       - POSTGRES_DB=regod
       - POSTGRES_USER=postgres
@@ -35,6 +56,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Schema is applied manually via reset_database.sh
+      # - ./init_fresh_db_generated.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -42,17 +65,6 @@ services:
       retries: 5
       start_period: 30s
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
 
   # Optional: Database management UI
   pgadmin:
@@ -67,4 +79,3 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:

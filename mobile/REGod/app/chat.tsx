@@ -16,8 +16,11 @@ interface Message {
 
 export default function ChatScreen() {
   const router = useRouter();
-  const { name } = useLocalSearchParams<{ name?: string }>();
+  const { name, thread_id } = useLocalSearchParams<{ name?: string; thread_id?: string }>();
   const { user } = useAuth();
+  
+  // Debug logging
+  console.log('[Chat] Screen loaded with params:', { name, thread_id });
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -26,7 +29,8 @@ export default function ChatScreen() {
   const [useWebSocket, setUseWebSocket] = useState(true);
   const [wsRetryCount, setWsRetryCount] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const flatListRef = useRef<FlatList>(null);
+  // Polling removed - using WebSocket only
   const maxRetries = 3;
 
   useEffect(() => {
@@ -47,7 +51,7 @@ export default function ChatScreen() {
         
         return () => clearTimeout(timer);
       } else {
-        startPolling();
+        console.log('[Chat] WebSocket not available, will retry connection');
       }
     }
     
@@ -59,17 +63,21 @@ export default function ChatScreen() {
         }
         wsRef.current.close();
       }
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-      }
     };
   }, [user?.id, useWebSocket]);
 
-  const connectWebSocket = (retryAttempt: number = 0) => {
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      scrollToBottom();
+    }
+  }, [messages.length]);
+
+  const connectWebSocket = async (retryAttempt: number = 0) => {
     if (!user?.id) return;
     
     try {
-      const ws = ApiService.createWebSocketConnection(user.id);
+      const ws = await ApiService.createWebSocketConnection(user.id);
       wsRef.current = ws;
       
       ws.onopen = () => {
@@ -90,7 +98,8 @@ export default function ChatScreen() {
               sender: message.sender_id === user.id ? 'user' : 'assistant',
               timestamp: new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             };
-            setMessages(prev => [newMessage, ...prev]);
+            setMessages(prev => [...prev, newMessage]);
+            scrollToBottom();
           },
           (error) => {
             console.warn('[Chat] WebSocket message parsing error:', error);
@@ -125,41 +134,36 @@ export default function ChatScreen() {
       ws.onerror = (error) => {
         // Reduce error noise - only log once per connection attempt
         if (ws.readyState === WebSocket.CONNECTING) {
-          console.warn('[Chat] WebSocket connection failed, using polling instead');
+          console.warn('[Chat] WebSocket connection failed, will retry');
           setIsConnected(false);
           
-          // Fall back to polling after WebSocket fails
-          setUseWebSocket(false);
+          // WebSocket failed, will retry connection
+          console.log('[Chat] WebSocket disconnected, will retry');
         }
       };
     } catch (error) {
-      console.warn('[Chat] WebSocket not available, using polling:', error);
-      // Fall back to polling
-      setUseWebSocket(false);
+      console.warn('[Chat] WebSocket connection failed:', error);
+      // WebSocket failed, will retry connection
+      console.log('[Chat] WebSocket connection failed, will retry');
     }
   };
 
-  const startPolling = () => {
-    console.log('[Chat] Starting polling for real-time updates...');
-    setIsConnected(true);
-    
-    // Poll for new messages every 3 seconds (less aggressive than 2s)
-    pollingRef.current = setInterval(async () => {
-      try {
-        const chatHistory = await ApiService.getChatHistory();
-        setMessages(chatHistory);
-      } catch (error) {
-        console.warn('[Chat] Polling error (will retry):', error);
-        // Don't clear the interval on error, just log and continue
-      }
-    }, 3000);
+  // Polling removed - using WebSocket for real-time updates
+
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
   };
 
   const loadChatHistory = async () => {
     try {
       setIsLoadingHistory(true);
-      const chatHistory = await ApiService.getChatHistory();
+      console.log('[Chat] Loading chat history for thread ID:', thread_id);
+      const chatHistory = await ApiService.getChatHistory(thread_id);
+      console.log('[Chat] Loaded chat history:', chatHistory);
       setMessages(chatHistory);
+      scrollToBottom();
     } catch (err) {
       console.error('Error loading chat history:', err);
       // Initialize with empty array if no history
@@ -191,28 +195,29 @@ export default function ChatScreen() {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    setMessages(prev => [...prev, userMessage]);
     const messageText = inputText;
     setInputText('');
     setLoading(true);
 
     try {
-      const response: ChatResponse = await ApiService.sendChatMessage(messageText);
+      // Send message to teacher - this just saves it, no immediate response expected
+      console.log('[Chat] Sending message:', messageText, 'to thread:', thread_id);
+      await ApiService.sendChatMessage(messageText, thread_id);
+      console.log('[Chat] Message sent to teacher successfully');
       
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: response.message,
-        sender: 'assistant',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
+      // Refresh chat history to show the sent message
+      setTimeout(async () => {
+        console.log('[Chat] Refreshing chat history after send...');
+        const chatHistory = await ApiService.getChatHistory(thread_id);
+        console.log('[Chat] Refreshed history after send:', chatHistory.length);
+        setMessages(chatHistory);
+      }, 500);
+      
     } catch (err) {
       console.error('Error sending message:', err);
       Alert.alert('Error', 'Failed to send message. Please try again.');
       
-      // Remove the user message if sending failed
-      setMessages(prev => prev.filter(msg => msg.id !== userMessage.id));
+      // Restore the input text if sending failed
       setInputText(messageText);
     } finally {
       setLoading(false);
@@ -258,11 +263,11 @@ export default function ChatScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
       >
         <FlatList
+          ref={flatListRef}
           data={messages}
           renderItem={renderMessage}
           keyExtractor={item => item.id}
           style={styles.messageList}
-          inverted
         />
         <View style={styles.inputContainer}>
           <TextInput

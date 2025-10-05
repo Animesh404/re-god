@@ -3,8 +3,8 @@ export const CONFIG = {
   // Clerk Configuration
   CLERK_PUBLISHABLE_KEY: process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_ZGl2aW5lLXVyY2hpbi04Mi5jbGVyay5hY2NvdW50cy5kZXYk',
   
-  // API Configuration - Auto-switching between Cloudflare tunnel and local
-  API_BASE_URL: (process.env.EXPO_PUBLIC_API_BASE_URL || 'https://saint-bennett-attachment-quizzes.trycloudflare.com/api'),
+  // API Configuration - Use environment variable or default to local
+  API_BASE_URL: (process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:4000/api'),
   
   // App Configuration
   APP_NAME: 'RE-God',

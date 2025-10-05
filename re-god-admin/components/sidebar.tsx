@@ -2,15 +2,15 @@
 
 import { Home, FileText, Settings, User, LogOut } from "lucide-react"
 import { useRouter, usePathname } from "next/navigation"
+import { useAuth } from "@/contexts/auth-context"
 
 export function Sidebar() {
   const router = useRouter()
   const pathname = usePathname()
+  const { logout, user } = useAuth()
 
   const handleLogout = () => {
-    localStorage.removeItem("isAuthenticated")
-    localStorage.removeItem("userEmail")
-    router.push("/login")
+    logout()
   }
 
   const isActive = (path: string) => pathname === path
@@ -52,9 +52,11 @@ export function Sidebar() {
       <div className="mt-auto">
         <button
           onClick={handleLogout}
-          className="flex flex-col items-center space-y-1 text-gray-400 hover:text-red-800"
+          className="flex flex-col items-center space-y-1 text-gray-400 hover:text-red-800 transition-colors duration-200 p-2 rounded-lg hover:bg-red-50"
+          title="Logout"
         >
           <LogOut className="w-5 h-5" />
+          <span className="text-xs">Logout</span>
         </button>
       </div>
     </div>

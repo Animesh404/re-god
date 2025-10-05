@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
+import uuid
 
 from app.database import get_db
-from app.models import User, UserNote, Course, Module, StudentTeacherAccess
+from app.models import User, UserNote, Course, Module, TeacherAssignment
 from app.schemas import UserResponse, NoteBase, NoteResponse, ShareCourseResponse
 from app.utils.auth import get_current_user
 from app.rbac import require_permission
@@ -72,7 +73,7 @@ async def get_user_notes(
     db: Session = Depends(get_db)
 ):
     """Get all notes for the current user"""
-    user_id = current_user["id"]
+    user_id = uuid.UUID(current_user["id"])
     notes = db.query(UserNote).filter(
         UserNote.user_id == user_id
     ).all()
@@ -84,14 +85,13 @@ async def get_user_notes(
         
         response.append(NoteResponse(
             id=note.id,
-            user_id=note.user_id,
+            user_id=str(note.user_id),
+            title=note.title,
+            content=note.content,
             course_id=note.course_id,
             lesson_id=note.lesson_id,
-            note_content=note.note_content,
             created_at=note.created_at,
-            updated_at=note.updated_at,
-            course_title=course.title if course else "Unknown Course",
-            lesson_title=lesson.title if lesson else "Unknown Lesson"
+            updated_at=note.updated_at or note.created_at
         ))
     
     return response
@@ -103,22 +103,27 @@ async def create_note(
     db: Session = Depends(get_db)
 ):
     """Create a new note"""
-    # Verify course and lesson exist
-    course = db.query(Course).filter(Course.id == note_data.course_id).first()
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
+    # Verify course and lesson exist (if provided)
+    course = None
+    lesson = None
     
-    lesson = db.query(Module).filter(Module.id == note_data.lesson_id).first()
-    if not lesson:
-        raise HTTPException(status_code=404, detail="Lesson not found")
+    if note_data.course_id:
+        course = db.query(Course).filter(Course.id == note_data.course_id).first()
+        if not course:
+            raise HTTPException(status_code=404, detail="Course not found")
     
-    # Check access for students
-    user_id = current_user["id"]
-    if current_user.get("role") == "student":
-        has_access = db.query(StudentTeacherAccess).filter(
-            StudentTeacherAccess.student_id == user_id,
-            StudentTeacherAccess.teacher_id == course.created_by,
-            StudentTeacherAccess.is_active == True
+    if note_data.lesson_id:
+        lesson = db.query(Module).filter(Module.id == note_data.lesson_id).first()
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+    
+    # Check access for students (if course is provided)
+    user_id = uuid.UUID(current_user["id"])
+    if current_user.get("role") == "student" and course:
+        has_access = db.query(TeacherAssignment).filter(
+            TeacherAssignment.student_id == user_id,
+            TeacherAssignment.teacher_id == course.created_by,
+            TeacherAssignment.active == True
         ).first()
         
         if not has_access:
@@ -132,7 +137,8 @@ async def create_note(
         user_id=user_id,
         course_id=note_data.course_id,
         lesson_id=note_data.lesson_id,
-        note_content=note_data.note_content
+        title=note_data.title,
+        content=note_data.content
     )
     
     db.add(new_note)
@@ -141,14 +147,13 @@ async def create_note(
     
     return NoteResponse(
         id=new_note.id,
-        user_id=new_note.user_id,
+        user_id=str(new_note.user_id),
+        title=new_note.title,
+        content=new_note.content,
         course_id=new_note.course_id,
         lesson_id=new_note.lesson_id,
-        note_content=new_note.note_content,
         created_at=new_note.created_at,
-        updated_at=new_note.updated_at,
-        course_title=course.title,
-        lesson_title=lesson.title
+        updated_at=new_note.updated_at or new_note.created_at
     )
 
 @router.put("/notes/{note_id}", response_model=NoteResponse)
@@ -224,10 +229,10 @@ async def share_course(
     # Check access for students
     user_id = current_user["id"]
     if current_user.get("role") == "student":
-        has_access = db.query(StudentTeacherAccess).filter(
-            StudentTeacherAccess.student_id == user_id,
-            StudentTeacherAccess.teacher_id == course.created_by,
-            StudentTeacherAccess.is_active == True
+        has_access = db.query(TeacherAssignment).filter(
+            TeacherAssignment.student_id == user_id,
+            TeacherAssignment.teacher_id == course.created_by,
+            TeacherAssignment.active == True
         ).first()
         
         if not has_access:

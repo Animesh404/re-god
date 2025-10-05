@@ -500,20 +500,6 @@ export default function CourseScreen() {
                   <Text style={styles.courseTitle}>
                     {dashboard.available_courses[currentCourseIndex].course_title}
                   </Text>
-                  <View style={styles.progressContainer}>
-                    <CircularProgress
-                      size={90}
-                      strokeWidth={8}
-                      progress={detailedProgress?.course_progress?.progress_percentage || dashboard.available_courses[currentCourseIndex].progress_percentage}
-                      backgroundColor="#E8E8E8"
-                      progressColor="#6B8E23"
-                    />
-                    <View style={styles.progressTextContainer}>
-                      <Text style={styles.progressText}>
-                        {`${Math.round(detailedProgress?.course_progress?.progress_percentage || dashboard.available_courses[currentCourseIndex].progress_percentage)}%`}
-                      </Text>
-                    </View>
-                  </View>
                 </View>
               )}
             </View>
@@ -576,11 +562,11 @@ export default function CourseScreen() {
             </View>
 
             {/* Footer with Green Background */}
-            <View style={styles.footer}>
+            {/* <View style={styles.footer}>
               <Text style={styles.footerText}>
                 App Development by Adventech in partnership with TBD...
               </Text>
-            </View>
+            </View> */}
           </View>
         </ScrollView>
 
@@ -612,6 +598,10 @@ export default function CourseScreen() {
       
       <ScrollView 
         style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        bounces={true}
+        alwaysBounceVertical={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -904,11 +894,11 @@ export default function CourseScreen() {
           </View>
 
           {/* Footer with Green Background */}
-          <View style={styles.footer}>
+          {/* <View style={styles.footer}>
             <Text style={styles.footerText}>
               App Development by Adventech in partnership with TBD...
             </Text>
-          </View>
+          </View> */}
         </View>
       </ScrollView>
 
@@ -948,6 +938,10 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 10,
   },
   courseTitle: {
     fontSize: 24,
