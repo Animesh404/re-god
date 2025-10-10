@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,28 +39,101 @@ export default function ConnectScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showTeacherCodeInput, setShowTeacherCodeInput] = useState(false);
-  
+  const [isConnected, setIsConnected] = useState(false);
+  const [useWebSocket, setUseWebSocket] = useState(true);
+  const wsRef = useRef<WebSocket | null>(null);
+
   // Check if user is admin or teacher
   const isAdminOrTeacher = user?.role === 'admin' || user?.role === 'teacher';
 
   useEffect(() => {
     loadConnections();
-  }, []);
+
+    // Initialize WebSocket for real-time updates
+    if (user?.id && useWebSocket) {
+      connectWebSocket();
+    }
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [user?.id]);
 
   // Refresh connections when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
       console.log('Connect screen focused - refreshing data');
-      loadConnections();
-    }, [])
+      if (user?.id) {
+        loadConnections('focus');
+      }
+    }, [user?.id])
   );
 
-  const loadConnections = async () => {
+  const connectWebSocket = async () => {
+    if (!user?.id) return;
+
     try {
-      setLoading(true);
+      const ws = await ApiService.createWebSocketConnection(user.id);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('[Connect] WebSocket connected successfully');
+        setIsConnected(true);
+      };
+
+      ws.onmessage = async (event) => {
+        console.log('[Connect] WebSocket message received:', event.data);
+        try {
+          await ApiService.handleWebSocketMessage(
+            event.data,
+            async (message) => {
+              // Handle new real-time message - refresh conversations to update unread counts
+              console.log('[Connect] New message received, refreshing conversations:', message);
+              try {
+                await loadConnections('websocket');
+                console.log('[Connect] Conversations refreshed successfully after new message');
+              } catch (refreshError) {
+                console.error('[Connect] Failed to refresh conversations after new message:', refreshError);
+                // Fallback: try refreshing again after a short delay
+                setTimeout(() => {
+                  loadConnections('websocket-fallback').catch(console.error);
+                }, 1000);
+              }
+            },
+            (error) => {
+              console.warn('[Connect] WebSocket message parsing error:', error);
+            }
+          );
+        } catch (error) {
+          console.error('[Connect] Error handling WebSocket message:', error);
+        }
+      };
+
+      ws.onclose = (event) => {
+        console.log('[Connect] WebSocket disconnected:', event.code, event.reason);
+        setIsConnected(false);
+      };
+
+      ws.onerror = (error) => {
+        console.warn('[Connect] WebSocket connection failed:', error);
+        setIsConnected(false);
+      };
+    } catch (error) {
+      console.warn('[Connect] WebSocket connection failed:', error);
+    }
+  };
+
+  const loadConnections = async (source = 'manual') => {
+    try {
+      // Only show loading spinner for manual refreshes, not WebSocket updates
+      if (source === 'manual' || source === 'focus') {
+        setLoading(true);
+      }
       setError(null);
 
-      console.log('Loading connections for user:', user);
+      console.log(`Loading connections for user (${source}):`, user);
       console.log('User role:', user?.role);
       console.log('User ID:', user?.id);
       
@@ -85,6 +158,7 @@ export default function ConnectScreen() {
             is_online: teacherData.is_online,
             unread_count: teacherData.unread_count
           }]);
+          console.log(`[${source}] Conversations updated: 1 conversation (teacher)`);
         } catch (teacherError) {
           console.error('Error fetching assigned teacher:', teacherError);
           
@@ -120,11 +194,12 @@ export default function ConnectScreen() {
           unread_count: student.unread_count,
           thread_id: student.thread_id  // Add thread_id to the mapping
         })));
+        console.log(`[${source}] Conversations updated:`, studentsData.length, 'conversations');
       } else {
         setError('Unable to determine user role');
       }
     } catch (err) {
-      console.error('Error loading connections:', err);
+      console.error(`[${source}] Error loading connections:`, err);
       if (err instanceof Error) {
         setError(`Failed to load connections: ${err.message}`);
       } else {
@@ -132,6 +207,7 @@ export default function ConnectScreen() {
       }
     } finally {
       setLoading(false);
+      console.log(`[${source}] loadConnections completed`);
     }
   };
 
@@ -254,7 +330,7 @@ export default function ConnectScreen() {
           <Text style={styles.headerTitle}>
             {isAdminOrTeacher ? 'Student Chats' : 'Connect'}
           </Text>
-          <TouchableOpacity onPress={loadConnections}>
+          <TouchableOpacity onPress={() => loadConnections('manual')}>
             <Ionicons name="refresh" size={28} color="black" />
           </TouchableOpacity>
         </View>
@@ -265,7 +341,7 @@ export default function ConnectScreen() {
               <Text style={styles.teacherCodeButtonText}>Enter Teacher Code</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.retryButton} onPress={loadConnections}>
+            <TouchableOpacity style={styles.retryButton} onPress={() => loadConnections('manual')}>
               <Text style={styles.retryButtonText}>Retry</Text>
             </TouchableOpacity>
           )}
@@ -279,10 +355,18 @@ export default function ConnectScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerSpacer} />
-        <Text style={styles.headerTitle}>
-          {isAdminOrTeacher ? 'Student Chats' : 'Connect'}
-        </Text>
-        <TouchableOpacity onPress={loadConnections}>
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>
+            {isAdminOrTeacher ? 'Student Chats' : 'Connect'}
+          </Text>
+          <View style={styles.connectionStatus}>
+            <View style={[styles.connectionIndicator, { backgroundColor: isConnected ? '#4CAF50' : '#FF9800' }]} />
+            <Text style={styles.connectionText}>
+              {isConnected ? 'Live' : 'Connecting...'}
+            </Text>
+          </View>
+        </View>
+        <TouchableOpacity onPress={() => loadConnections('manual')}>
           <Ionicons name="refresh" size={28} color="black" />
         </TouchableOpacity>
       </View>
@@ -343,11 +427,30 @@ const styles = StyleSheet.create({
   headerSpacer: {
     width: 28, // Same width as the menu icon to balance the layout
   },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     textAlign: 'center',
-    flex: 1,
+  },
+  connectionStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  connectionIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 4,
+  },
+  connectionText: {
+    fontSize: 10,
+    color: '#666',
+    fontWeight: '500',
   },
   conversationItem: {
     flexDirection: 'row',

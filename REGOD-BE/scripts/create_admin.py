@@ -26,6 +26,15 @@ def create_admin_user():
     db = SessionLocal()
     
     try:
+        # Test database connection first
+        db.execute("SELECT 1")
+        print("✅ Database connection successful")
+    except Exception as e:
+        print(f"❌ Database connection failed: {str(e)}")
+        db.close()
+        return False
+    
+    try:
         # Check if admin and teacher roles exist
         admin_role = db.query(Role).filter(Role.name == "admin").first()
         teacher_role = db.query(Role).filter(Role.name == "teacher").first()
@@ -206,11 +215,27 @@ def create_admin_user():
 def main():
     """Main function to create test users"""
     print("🚀 Creating test users for RE-God application...")
+    print(f"🐳 Running in Docker: {'Yes' if os.path.exists('/.dockerenv') else 'No'}")
     print()
     
-    # Create admin user
-    print("Creating admin user...")
-    admin_success = create_admin_user()
+    # Retry mechanism for database connection
+    max_retries = 5
+    retry_delay = 5  # seconds
+    
+    for attempt in range(max_retries):
+        print(f"Attempt {attempt + 1}/{max_retries}: Creating admin user...")
+        admin_success = create_admin_user()
+        
+        if admin_success:
+            break
+        else:
+            if attempt < max_retries - 1:
+                print(f"⏳ Waiting {retry_delay} seconds before retry...")
+                import time
+                time.sleep(retry_delay)
+            else:
+                print("❌ Failed to create admin user after all retries")
+    
     print()
     
     # # Create test teacher

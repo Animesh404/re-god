@@ -8,6 +8,7 @@ import { AdminProfile } from "@/components/admin-profile"
 const AdminStats = lazy(() => import("@/components/admin-stats").then(m => ({ default: m.AdminStats })))
 const AdminDirectory = lazy(() => import("@/components/admin-directory").then(m => ({ default: m.AdminDirectory })))
 const TeachersDirectory = lazy(() => import("@/components/teachers-directory").then(m => ({ default: m.TeachersDirectory })))
+const StudentsDirectory = lazy(() => import("@/components/teacher-students").then(m => ({ default: m.TeacherStudents })))
 
 export function AdminDashboard() {
   return (
@@ -24,8 +25,11 @@ export function AdminDashboard() {
 export function AdminDashboardRight() {
   return (
     <Suspense fallback={<div className="animate-pulse bg-gray-200 h-32 rounded"></div>}>
-      <AdminDirectory />
+      <StudentsDirectory />
       <TeachersDirectory />
     </Suspense>
   )
 }
+
+
+

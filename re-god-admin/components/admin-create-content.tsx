@@ -53,24 +53,42 @@ const CourseStep1 = ({ form, setForm }: { form: any, setForm: (form: any) => voi
   </Card>
 )
 
-const CourseStep2 = ({ form, setForm }: { form: any, setForm: (form: any) => void }) => {
+const CourseStep2 = ({ form, setForm, courseId }: { form: any, setForm: (form: any) => void, courseId?: number }) => {
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const [uploading, setUploading] = useState(false)
 
   const uploadThumb = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
-    const res = await AdminApiService.uploadLocal(f)
-    setForm((s: any) => ({ ...s, thumbnail_url: res.path }))
+    
+    setUploading(true)
+    try {
+      // Use structured upload if we have a courseId (editing), otherwise use generic upload
+      if (courseId) {
+        const res = await AdminApiService.uploadCourseCover(f, courseId)
+        setForm((s: any) => ({ ...s, thumbnail_url: res.cover_url }))
+      } else {
+        const res = await AdminApiService.uploadFile(f)
+        setForm((s: any) => ({ ...s, thumbnail_url: res.path }))
+      }
+    } catch (error) {
+      console.error('Upload failed:', error)
+      alert('Failed to upload thumbnail. Please try again.')
+    } finally {
+      setUploading(false)
+    }
   }
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Course Thumbnail</CardTitle>
+        <p className="text-sm text-gray-500 mt-1">Upload to Supabase (with local fallback)</p>
       </CardHeader>
       <CardContent>
-        <Label>Upload Thumbnail (Local)</Label>
-        <Input ref={fileRef} type="file" onChange={uploadThumb} />
+        <Label>Upload Thumbnail</Label>
+        <Input ref={fileRef} type="file" onChange={uploadThumb} accept="image/*" disabled={uploading} />
+        {uploading && <p className="text-sm text-blue-600 mt-2">Uploading...</p>}
         {form.thumbnail_url && (
           <div className="mt-4">
             <p className="text-sm text-gray-600">Preview:</p>
@@ -117,9 +135,17 @@ const CourseStep3 = ({ form, setForm, courseId }: { form: any, setForm: (form: a
 
   const uploadCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
-    if (!f) return
-    const res = await AdminApiService.uploadLocal(f)
-    setNewChapter(prev => ({ ...prev, cover_image_url: res.path }))
+    if (!f || !courseId) return
+    
+    try {
+      // For chapter thumbnails during course creation, use generic upload
+      // After chapter is created, we can use the structured upload
+      const res = await AdminApiService.uploadFile(f)
+      setNewChapter(prev => ({ ...prev, cover_image_url: res.path }))
+    } catch (error) {
+      console.error('Upload failed:', error)
+      alert('Failed to upload cover image. Please try again.')
+    }
   }
 
   return (
@@ -313,9 +339,17 @@ const ModuleStep2 = ({
 
   const uploadCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
-    if (!f) return
-    const res = await AdminApiService.uploadLocal(f)
-    setNewChapter(prev => ({ ...prev, cover_image_url: res.path }))
+    if (!f || !selectedCourseId) return
+    
+    try {
+      // For new chapters, use generic upload initially
+      // After creation, can be updated with structured upload
+      const res = await AdminApiService.uploadFile(f)
+      setNewChapter(prev => ({ ...prev, cover_image_url: res.path }))
+    } catch (error) {
+      console.error('Upload failed:', error)
+      alert('Failed to upload cover image. Please try again.')
+    }
   }
 
   return (
@@ -469,23 +503,43 @@ const ModuleStep3 = ({ form, setForm }: { form: any, setForm: (form: any) => voi
   </Card>
 )
 
-const ModuleStep4 = ({ form, setForm }: { form: any, setForm: (form: any) => void }) => {
+const ModuleStep4 = ({ form, setForm, courseId, moduleId }: { form: any, setForm: (form: any) => void, courseId?: number, moduleId?: number }) => {
   const headerImageRef = useRef<HTMLInputElement | null>(null)
+  const [uploading, setUploading] = useState(false)
 
   const uploadHeaderImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
-    const res = await AdminApiService.uploadLocal(f)
-    setForm((s: any) => ({ ...s, header_image_url: res.path }))
+    
+    setUploading(true)
+    try {
+      // Use structured upload if we have all IDs, otherwise use generic upload
+      if (courseId && form.chapter_id && moduleId) {
+        const res = await AdminApiService.uploadLessonImage(f, courseId, form.chapter_id, moduleId)
+        setForm((s: any) => ({ ...s, header_image_url: res.image_url }))
+      } else {
+        const res = await AdminApiService.uploadFile(f)
+        setForm((s: any) => ({ ...s, header_image_url: res.path }))
+      }
+    } catch (error) {
+      console.error('Upload failed:', error)
+      alert('Failed to upload header image. Please try again.')
+    } finally {
+      setUploading(false)
+    }
   }
 
   return (
     <Card>
-      <CardHeader><CardTitle>Media & Attachments</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle>Media & Attachments</CardTitle>
+        <p className="text-sm text-gray-500 mt-1">Upload to Supabase (with local fallback)</p>
+      </CardHeader>
       <CardContent className="space-y-4">
             <div>
           <Label>Header Image</Label>
-          <Input ref={headerImageRef} type="file" onChange={uploadHeaderImage} accept="image/*" />
+          <Input ref={headerImageRef} type="file" onChange={uploadHeaderImage} accept="image/*" disabled={uploading} />
+          {uploading && <p className="text-sm text-blue-600 mt-2">Uploading...</p>}
           {form.header_image_url && (
             <div className="mt-2">
               <p className="text-sm text-gray-600">Preview:</p>
@@ -958,14 +1012,14 @@ export function ContentManagerModal({
             >
               {/* Course Steps */}
               {contentType === "course" && step === 1 && <CourseStep1 form={courseForm} setForm={setCourseForm} />}
-              {contentType === "course" && step === 2 && <CourseStep2 form={courseForm} setForm={setCourseForm} />}
+              {contentType === "course" && step === 2 && <CourseStep2 form={courseForm} setForm={setCourseForm} courseId={initialData?.id} />}
               {contentType === "course" && step === 3 && <CourseStep3 form={courseForm} setForm={setCourseForm} courseId={courseId} />}
 
               {/* Module Steps */}
               {contentType === "module" && step === 1 && <ModuleStep1 form={moduleForm} setForm={setModuleForm} courses={courses} selectedCourseId={selectedCourseId} onCourseChange={handleCourseChange} />}
               {contentType === "module" && step === 2 && <ModuleStep2 form={moduleForm} setForm={setModuleForm} chapters={chapters} selectedCourseId={selectedCourseId} onChaptersUpdate={setChapters} />}
               {contentType === "module" && step === 3 && <ModuleStep3 form={moduleForm} setForm={setModuleForm} />}
-              {contentType === "module" && step === 4 && <ModuleStep4 form={moduleForm} setForm={setModuleForm} />}
+              {contentType === "module" && step === 4 && <ModuleStep4 form={moduleForm} setForm={setModuleForm} courseId={selectedCourseId} moduleId={initialData?.id} />}
               {contentType === "module" && step === 5 && <ModuleStep5 quizData={quizData} setQuizData={setQuizData} />}
             </motion.div>
           </AnimatePresence>

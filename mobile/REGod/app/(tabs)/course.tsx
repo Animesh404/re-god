@@ -585,6 +585,7 @@ export default function CourseScreen() {
           }
           chapterTitle={selectedChapterId ? chapters.find((c: Chapter) => c.id === selectedChapterId)?.title || "Chapter" : "All Lessons"}
           showChapterProgress={!selectedChapterId}
+          isTeacherOrAdmin={isAdminOrTeacher}
           detailedProgress={detailedProgress}
         />
       </SafeAreaView>
@@ -917,6 +918,7 @@ export default function CourseScreen() {
         }
         chapterTitle={selectedChapterId ? chapters.find((c: Chapter) => c.id === selectedChapterId)?.title || "Chapter" : "All Lessons"}
         showChapterProgress={!selectedChapterId} // Only show chapter progress when showing all chapters
+        isTeacherOrAdmin={isAdminOrTeacher}
         detailedProgress={detailedProgress}
       />
     </SafeAreaView>

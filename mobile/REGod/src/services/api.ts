@@ -990,6 +990,30 @@ class ApiService {
   }
 
   static async uploadProfilePicture(imageUri: string): Promise<{ path: string; public_url: string }> {
+    // Use Supabase storage if configured
+    const SupabaseStorage = await import('./supabaseStorage').then(m => m.default);
+    if (SupabaseStorage.isConfigured()) {
+      try {
+        const userData = await AsyncStorage.getItem('regod_user_data');
+        if (userData) {
+          const user = JSON.parse(userData);
+          const result = await SupabaseStorage.uploadAvatar(user.id, imageUri);
+          
+          // Update user profile with new avatar URL
+          await this.updateProfile({ avatar_url: result.publicUrl });
+          
+          return {
+            path: result.path,
+            public_url: result.publicUrl,
+          };
+        }
+      } catch (error) {
+        console.error('[UPLOAD] Supabase upload failed, falling back to backend:', error);
+        // Fall through to backend upload
+      }
+    }
+
+    // Fallback to backend upload
     const formData = new FormData();
     
     // Generate a filename
@@ -1050,6 +1074,52 @@ class ApiService {
     };
   }
 
+  // Supabase storage methods
+  static async uploadCourseCover(courseId: number, imageUri: string): Promise<{ path: string; public_url: string }> {
+    const SupabaseStorage = await import('./supabaseStorage').then(m => m.default);
+    
+    if (!SupabaseStorage.isConfigured()) {
+      throw new Error('Supabase storage is not configured');
+    }
+
+    const result = await SupabaseStorage.uploadCourseCover(courseId, imageUri);
+    
+    return {
+      path: result.path,
+      public_url: result.publicUrl,
+    };
+  }
+
+  static async uploadChapterBanner(courseId: number, chapterId: number, imageUri: string): Promise<{ path: string; public_url: string }> {
+    const SupabaseStorage = await import('./supabaseStorage').then(m => m.default);
+    
+    if (!SupabaseStorage.isConfigured()) {
+      throw new Error('Supabase storage is not configured');
+    }
+
+    const result = await SupabaseStorage.uploadChapterBanner(courseId, chapterId, imageUri);
+    
+    return {
+      path: result.path,
+      public_url: result.publicUrl,
+    };
+  }
+
+  static async uploadLessonThumbnail(courseId: number, chapterId: number, lessonId: number, imageUri: string): Promise<{ path: string; public_url: string }> {
+    const SupabaseStorage = await import('./supabaseStorage').then(m => m.default);
+    
+    if (!SupabaseStorage.isConfigured()) {
+      throw new Error('Supabase storage is not configured');
+    }
+
+    const result = await SupabaseStorage.uploadLessonThumbnail(courseId, chapterId, lessonId, imageUri);
+    
+    return {
+      path: result.path,
+      public_url: result.publicUrl,
+    };
+  }
+
   // Admin endpoints (if user is admin)
   static async getAdminStats() {
     return this.makeAuthenticatedRequest('/admin/stats');
@@ -1057,6 +1127,12 @@ class ApiService {
 
   static async getTeachersDirectory() {
     return this.makeAuthenticatedRequest('/admin/teachers');
+  }
+
+  static async deleteUserAccount(userId: string): Promise<{ message: string; user_id: string; reassigned_students: number }> {
+    return this.makeAuthenticatedRequest(`/admin/users/${userId}`, {
+      method: 'DELETE',
+    });
   }
 
   // Teacher code endpoints
@@ -1091,6 +1167,12 @@ class ApiService {
 
   static async deleteChapterFavorite(favoriteId: number): Promise<{ message: string }> {
     return this.makeAuthenticatedRequest(`/user/chapter-favourites/${favoriteId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async deleteAccount(): Promise<{ message: string }> {
+    return this.makeAuthenticatedRequest('/user/account', {
       method: 'DELETE',
     });
   }

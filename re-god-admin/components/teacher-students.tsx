@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react"
 import { Users, Mail, Calendar } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
+import { useRouter } from "next/navigation"
 import AdminApiService from "@/lib/api"
+import { useAuth } from "@/contexts/auth-context"
 
 interface Student {
   id: string
@@ -13,17 +15,20 @@ interface Student {
 }
 
 export function TeacherStudents() {
+  const router = useRouter()
   const [students, setStudents] = useState<Student[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState("")
+  const { user } = useAuth()
+  const isAdmin = user?.roles?.includes('admin') || user?.role === 'admin'
 
   useEffect(() => {
     const fetchStudents = async () => {
       try {
         setIsLoading(true)
-        const data = await AdminApiService.getMyStudents()
+        const data = isAdmin ? await AdminApiService.getStudentsDirectory() : await AdminApiService.getMyStudents()
         console.log('My students:', data)
-        setStudents(data)
+        setStudents(data as Student[])
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to fetch students';
         console.log(errorMessage)
@@ -35,6 +40,10 @@ export function TeacherStudents() {
 
     fetchStudents()
   }, [])
+
+  const handleViewStudent = (studentId: string) => {
+    router.push(`/students/${studentId}`)
+  }
 
   if (isLoading) {
     return (
@@ -71,7 +80,7 @@ export function TeacherStudents() {
       <CardContent className="p-6">
         <div className="flex items-center space-x-2 mb-4">
           <Users className="w-5 h-5 text-gray-600" />
-          <h3 className="text-lg font-semibold text-gray-900">My Students</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Students</h3>
         </div>
         
         {students.length === 0 ? (
@@ -83,7 +92,11 @@ export function TeacherStudents() {
         ) : (
           <div className="space-y-3">
             {students.map((student) => (
-              <div key={student.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <div 
+                key={student.id} 
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
+                onClick={() => handleViewStudent(student.id)}
+              >
                 <div className="flex-1">
                   <div className="flex items-center space-x-2 mb-1">
                     <h4 className="font-medium text-gray-900">{student.name}</h4>

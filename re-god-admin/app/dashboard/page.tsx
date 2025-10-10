@@ -17,12 +17,23 @@ export default function DashboardPage() {
   
   // Check if user is admin or teacher
   // IMPORTANT: Admin components should ONLY render if user has "admin" role in the roles array
-  const isAdmin = user?.roles?.includes('admin') && user?.role === 'admin'
+  const isAdmin = user?.roles?.includes('admin') || user?.role === 'admin'
   const isTeacher = user?.roles?.includes('teacher') || user?.role === 'teacher'
   
   // Additional safety: If user doesn't have explicit admin role, force teacher mode
-  const safeIsAdmin = isAdmin && user?.roles?.includes('admin')
-  const safeIsTeacher = isTeacher || !isAdmin
+  const safeIsAdmin = isAdmin
+  const safeIsTeacher = isTeacher && !isAdmin // Only show teacher dashboard if NOT admin
+  
+  // Debug logging
+  console.log('🔍 Dashboard Debug:', {
+    user: user ? { id: user.id, email: user.email, name: user.name } : null,
+    roles: user?.roles,
+    role: user?.role,
+    isAdmin,
+    isTeacher,
+    safeIsAdmin,
+    safeIsTeacher
+  })
   
   // Redirect unauthorized users or users needing teacher code
   if (!isLoading && user) {

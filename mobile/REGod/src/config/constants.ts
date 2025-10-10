@@ -6,6 +6,11 @@ export const CONFIG = {
   // API Configuration - Use environment variable or default to local
   API_BASE_URL: (process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:4000/api'),
   
+  // Supabase Configuration
+  SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL || '',
+  SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '',
+  SUPABASE_VIDEO_URL: process.env.EXPO_PUBLIC_SUPABASE_VIDEO_URL || '',
+  
   // App Configuration
   APP_NAME: 'RE-God',
   VERSION: '1.0.0',
@@ -24,4 +29,12 @@ export const getImageUrl = (imageUrl: string | null): string | null => {
 // Validation
 if (!CONFIG.CLERK_PUBLISHABLE_KEY) {
   console.warn('Warning: CLERK_PUBLISHABLE_KEY is not set. Please set EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY in your environment variables.');
+}
+
+if (!CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_ANON_KEY) {
+  console.warn('Warning: Supabase configuration is incomplete. Please set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in your environment variables.');
+}
+
+if (!CONFIG.SUPABASE_VIDEO_URL) {
+  console.warn('Warning: SUPABASE_VIDEO_URL is not set. Video caching will not work. Please set EXPO_PUBLIC_SUPABASE_VIDEO_URL in your environment variables.');
 }

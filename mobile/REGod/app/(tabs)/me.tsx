@@ -259,6 +259,50 @@ export default function MeScreen() {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure you want to delete your account? This action cannot be undone and you will lose all your data, including courses, notes, and progress.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Show loading state (optional)
+              await ApiService.deleteAccount();
+              
+              // Show success message
+              Alert.alert(
+                'Account Deleted',
+                'Your account has been successfully deleted.',
+                [
+                  {
+                    text: 'OK',
+                    onPress: async () => {
+                      // Clear tokens and logout
+                      await logout();
+                      // Navigate to auth screen
+                      router.replace('/auth');
+                    }
+                  }
+                ]
+              );
+            } catch (error) {
+              console.error('Error deleting account:', error);
+              const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+              Alert.alert('Error', `Failed to delete account: ${errorMessage}`);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const handleSetReminder = async () => {
     try {
       if (!Notifications) {
@@ -539,6 +583,14 @@ export default function MeScreen() {
               }}
             >
               <Text style={styles.logoutButtonText}>Logout</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.section}>
+            <TouchableOpacity style={styles.menuItem} onPress={handleDeleteAccount}>
+              <View style={styles.menuItemLeft}>
+                <Ionicons name="trash-outline" size={20} color="#95928d" />
+                <Text style={styles.menuItemText}>Delete Account</Text>
+              </View>
             </TouchableOpacity>
           </View>
         </View>

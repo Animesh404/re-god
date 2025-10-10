@@ -8,7 +8,7 @@ import os
 
 from app.database import engine, get_db, test_connection
 from app import models
-from app.routes import auth, courses, favorites, chat, profile, admin, teacher_codes, clerk_webhooks, uploads, notifications
+from app.routes import auth, courses, favorites, chat, profile, admin, teacher_codes, clerk_webhooks, uploads, notifications, upload
 from app.rbac import initialize_rbac
 from app.queue_service import pgmq_service
 
@@ -96,6 +96,7 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(teacher_codes.router, prefix="/api", tags=["Teacher Codes"])
 app.include_router(clerk_webhooks.router, prefix="/api", tags=["Clerk Webhooks"])
 app.include_router(uploads.router, prefix="/api", tags=["Uploads"])
+app.include_router(upload.router, prefix="/api/upload", tags=["File Upload"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 
 @app.get("/")

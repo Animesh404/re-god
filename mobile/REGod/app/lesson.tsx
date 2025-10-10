@@ -752,13 +752,23 @@ export default function LessonScreen() {
             </View>
           )}
 
-          {/* Quiz Section */}
-          {module.quiz && (
+          {/* Quiz Section - Only show unlock message for students */}
+          {module.quiz && !isTeacherOrAdmin && (
             <View style={styles.unlockSection}>
               <Ionicons name="lock-closed" size={32} color="gray" />
               <Text style={styles.unlockText}>Complete the quiz to unlock the next lesson</Text>
               <TouchableOpacity style={styles.responseButton} onPress={handleQuizPress}>
                 <Text style={styles.responseButtonText}>Start Quiz</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Quiz Section for Teachers/Admins - Direct access */}
+          {module.quiz && isTeacherOrAdmin && (
+            <View style={styles.teacherQuizSection}>
+              <Text style={styles.teacherQuizText}>Quiz Available</Text>
+              <TouchableOpacity style={styles.responseButton} onPress={handleQuizPress}>
+                <Text style={styles.responseButtonText}>View Quiz</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -1228,6 +1238,22 @@ const styles = StyleSheet.create({
     color: 'gray',
     textAlign: 'center',
     marginVertical: 10,
+  },
+  teacherQuizSection: {
+    backgroundColor: '#F0F8F0',
+    borderRadius: 10,
+    padding: 20,
+    alignItems: 'center',
+    marginVertical: 20,
+    borderWidth: 1,
+    borderColor: '#6B8E23',
+  },
+  teacherQuizText: {
+    fontSize: 16,
+    color: '#6B8E23',
+    textAlign: 'center',
+    marginVertical: 10,
+    fontWeight: '500',
   },
   promptText: {
     fontSize: 14,

@@ -33,6 +33,8 @@ services:
       - CLERK_WEBHOOK_SECRET=whsec_0W4nP3ARqYanM0/vrBBEvevqDb/XzPLa
       - CLERK_JWKS_URL=https://divine-urchin-82.clerk.accounts.dev/.well-known/jwks.json
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:19006}
+      - NEXT_PUBLIC_SUPABASE_URL=https://lbjvjdgkygkhprryfwka.supabase.co
+      - SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxianZqZGdreWdraHBycnlmd2thIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTkzODc1OSwiZXhwIjoyMDc1NTE0NzU5fQ.wQ5UxYz07xwR6IE52hloSFYYlyqSO2HJGPu2zbdpzcQ
     env_file:
       - .env
     depends_on:

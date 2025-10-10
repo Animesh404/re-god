@@ -128,7 +128,8 @@ async def clerk_exchange(
             pass
         
         # Generate JWT tokens
-        user_role = user.roles[0].name if user.roles else "student"
+        # Prioritize admin role over teacher role
+        user_role = "admin" if "admin" in [role.name for role in user.roles] else (user.roles[0].name if user.roles else "student")
         access_token = create_access_token(str(user.id), user.email, user_role)
         refresh_token = create_refresh_token(str(user.id))
         

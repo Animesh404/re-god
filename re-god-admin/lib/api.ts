@@ -57,6 +57,80 @@ interface Teacher {
   is_active: boolean;
 }
 
+interface Student {
+  id: string;
+  first_name: string;
+  last_name: string;
+  name: string;
+  email: string;
+  phone?: string;
+  avatar_url?: string;
+  created_at: string;
+  is_active: boolean;
+  enrolled_courses: number;
+}
+
+interface StudentAnalytics {
+  student: {
+    id: string;
+    name: string;
+    email: string;
+    phone?: string;
+    avatar_url?: string;
+    created_at: string;
+  };
+  stats: {
+    time_spent_hours: number;
+    avg_time_per_day_hours: number;
+    finished_courses: number;
+    total_courses: number;
+    course_progress_percentage: number;
+    completed_lessons: number;
+    total_lessons: number;
+    lesson_progress_percentage: number;
+    completed_quizzes: number;
+    quiz_progress_percentage: number;
+  };
+  time_series: Array<{
+    date: string;
+    hours: number;
+  }>;
+}
+
+interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  age?: number;
+  avatar_url?: string;
+  church_admin_name?: string;
+  home_church?: string;
+  country?: string;
+  city?: string;
+  postal_code?: string;
+  church_admin_cell_phone?: string;
+  is_verified: boolean;
+  onboarding_completed: boolean;
+  created_at: string;
+  last_login?: string;
+  roles: string[];
+}
+
+interface UserProfileUpdate {
+  name?: string;
+  email?: string;
+  phone?: string;
+  age?: number;
+  avatar_url?: string;
+  church_admin_name?: string;
+  home_church?: string;
+  country?: string;
+  city?: string;
+  postal_code?: string;
+  church_admin_cell_phone?: string;
+}
+
 interface AdminCourse {
   id: number;
   title: string;
@@ -358,6 +432,134 @@ class AdminApiService {
     return this.handleResponse(response);
   }
 
+  // Student endpoints
+  static async getStudentsDirectory(): Promise<Student[]> {
+    return this.makeAuthenticatedRequest<Student[]>(`${API_BASE_URL}/admin/students`, {
+      method: 'GET',
+    });
+  }
+
+  static async getStudentAnalytics(studentId: string): Promise<StudentAnalytics> {
+    return this.makeAuthenticatedRequest<StudentAnalytics>(`${API_BASE_URL}/admin/students/${studentId}/analytics`, {
+      method: 'GET',
+    });
+  }
+
+  static async deleteStudent(studentId: string): Promise<{ message: string }> {
+    return this.makeAuthenticatedRequest<{ message: string }>(`${API_BASE_URL}/admin/users/${studentId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Profile endpoints
+  static async getUserProfile(): Promise<UserProfile> {
+    return this.makeAuthenticatedRequest<UserProfile>(`${API_BASE_URL}/user/profile`, {
+      method: 'GET',
+    });
+  }
+
+  static async updateUserProfile(profileData: UserProfileUpdate): Promise<UserProfile> {
+    return this.makeAuthenticatedRequest<UserProfile>(`${API_BASE_URL}/user/profile`, {
+      method: 'PUT',
+      body: JSON.stringify(profileData),
+    });
+  }
+
+  // Upload methods (multipart/form-data)
+  static async uploadAvatar(file: File): Promise<{ success: boolean; message: string; avatar_url: string; filename: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Get auth headers without Content-Type (let browser set it for multipart/form-data)
+    const headers = this.getAuthHeaders();
+    delete headers['Content-Type'];
+
+    const response = await fetch(`${API_BASE_URL}/upload/avatar`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to upload avatar');
+    }
+
+    return response.json();
+  }
+
+  static async uploadCourseCover(file: File, courseId: number): Promise<{ success: boolean; message: string; cover_url: string; filename: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('course_id', courseId.toString());
+
+    // Get auth headers without Content-Type (let browser set it for multipart/form-data)
+    const headers = this.getAuthHeaders();
+    delete headers['Content-Type'];
+
+    const response = await fetch(`${API_BASE_URL}/upload/course-cover`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to upload course cover');
+    }
+
+    return response.json();
+  }
+
+  static async uploadChapterThumbnail(file: File, courseId: number, chapterId: number): Promise<{ success: boolean; message: string; thumbnail_url: string; filename: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('course_id', courseId.toString());
+    formData.append('chapter_id', chapterId.toString());
+
+    // Get auth headers without Content-Type (let browser set it for multipart/form-data)
+    const headers = this.getAuthHeaders();
+    delete headers['Content-Type'];
+
+    const response = await fetch(`${API_BASE_URL}/upload/chapter-thumbnail`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to upload chapter thumbnail');
+    }
+
+    return response.json();
+  }
+
+  static async uploadLessonImage(file: File, courseId: number, chapterId: number, lessonId: number): Promise<{ success: boolean; message: string; image_url: string; filename: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('course_id', courseId.toString());
+    formData.append('chapter_id', chapterId.toString());
+    formData.append('lesson_id', lessonId.toString());
+
+    // Get auth headers without Content-Type (let browser set it for multipart/form-data)
+    const headers = this.getAuthHeaders();
+    delete headers['Content-Type'];
+
+    const response = await fetch(`${API_BASE_URL}/upload/lesson-image`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || 'Failed to upload lesson image');
+    }
+
+    return response.json();
+  }
+
   // Uploads
   static async presignS3Upload(filename: string, contentType: string) {
     const response = await fetch(`${API_BASE_URL}/uploads/s3/presign`, {
@@ -381,15 +583,30 @@ class AdminApiService {
     return this.handleResponse(response);
   }
 
-  // Helper function to get full upload URL
+  // Helper function to get full upload URL (supports both Supabase and local URLs)
   static getUploadUrl(path: string): string {
     if (!path) return '';
-    // If path already includes the full URL, return as is
+    // If path already includes the full URL, return as is (Supabase URLs)
     if (path.startsWith('http')) return path;
-    // If path starts with /uploads, prepend the upload base URL
+    // If path starts with /uploads, prepend the upload base URL (local uploads)
     if (path.startsWith('/uploads')) return `${UPLOAD_BASE_URL}${path}`;
     // Otherwise, assume it's a relative path and prepend /uploads
     return `${UPLOAD_BASE_URL}/uploads/${path}`;
+  }
+
+
+
+
+  /**
+   * Generic hybrid upload method
+   * Tries Supabase first, falls back to local backend
+   * Use this for general uploads when you don't need structured paths
+   */
+  static async uploadFile(file: File): Promise<{ path: string; url: string }> {
+    // For now, just use local upload for generic files
+    // You can extend this to use Supabase buckets as needed
+    const uploadResult = await this.uploadLocal(file);
+    return { path: uploadResult.path, url: this.getUploadUrl(uploadResult.path) };
   }
 
   // Courses (admin/teacher)
@@ -550,4 +767,4 @@ class AdminApiService {
 }
 
 export default AdminApiService;
-export type { LoginRequest, LoginResponse, TeacherInviteRequest, TeacherInviteResponse, AdminStats, Teacher, MyCodeResponse };
+export type { LoginRequest, LoginResponse, TeacherInviteRequest, TeacherInviteResponse, AdminStats, Teacher, Student, StudentAnalytics, UserProfile, UserProfileUpdate, MyCodeResponse };

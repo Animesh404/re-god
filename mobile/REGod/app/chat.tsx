@@ -28,6 +28,7 @@ export default function ChatScreen() {
   const [isConnected, setIsConnected] = useState(false);
   const [useWebSocket, setUseWebSocket] = useState(true);
   const [wsRetryCount, setWsRetryCount] = useState(0);
+  const [recentlySentMessages, setRecentlySentMessages] = useState<Map<string, number>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const flatListRef = useRef<FlatList>(null);
   // Polling removed - using WebSocket only
@@ -91,15 +92,59 @@ export default function ChatScreen() {
         ApiService.handleWebSocketMessage(
           event.data,
           (message) => {
-            // Handle new real-time message
-            const newMessage: Message = {
+            console.log('[Chat] Processing WebSocket message:', {
               id: message.id,
-              text: message.content,
-              sender: message.sender_id === user.id ? 'user' : 'assistant',
-              timestamp: new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            };
-            setMessages(prev => [...prev, newMessage]);
-            scrollToBottom();
+              content: message.content,
+              sender_id: message.sender_id,
+              current_user_id: user.id,
+              timestamp: message.timestamp
+            });
+            
+            // Handle new real-time message
+            setMessages(prev => {
+              // Check if message already exists by ID
+              const messageExists = prev.some(msg => msg.id === message.id);
+              if (messageExists) {
+                console.log('[Chat] Message already exists by ID, skipping:', message.id);
+                return prev;
+              }
+
+              // Check if this is our own message by sender_id AND if we recently sent this exact content
+              const isFromUs = message.sender_id === user.id;
+              
+              if (isFromUs) {
+                // This message is from us - check if we already have it locally
+                const existingLocalMessage = prev.find(msg => 
+                  msg.sender === 'user' && 
+                  msg.text === message.content &&
+                  // Check if it was sent in the last 5 seconds
+                  Math.abs(new Date().getTime() - new Date(message.timestamp).getTime()) < 5000
+                );
+                
+                if (existingLocalMessage) {
+                  console.log('[Chat] Found existing local message, updating ID:', existingLocalMessage.id, '->', message.id);
+                  // Update the existing message's ID to match the backend ID
+                  return prev.map(msg => 
+                    msg.id === existingLocalMessage.id 
+                      ? { ...msg, id: message.id }
+                      : msg
+                  );
+                }
+              }
+
+              // This is a new message - add it with proper sender attribution
+              const newMessage: Message = {
+                id: message.id,
+                text: message.content,
+                sender: message.sender_id === user.id ? 'user' : 'assistant',
+                timestamp: new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              };
+
+              console.log('[Chat] Adding new message:', newMessage);
+              const updatedMessages = [...prev, newMessage];
+              setTimeout(() => scrollToBottom(), 100);
+              return updatedMessages;
+            });
           },
           (error) => {
             console.warn('[Chat] WebSocket message parsing error:', error);
@@ -188,35 +233,58 @@ export default function ChatScreen() {
   const handleSend = async () => {
     if (inputText.trim().length === 0 || loading) return;
 
+    const messageId = `local_${Date.now()}`;
+    const messageText = inputText;
     const userMessage: Message = {
-      id: Date.now().toString(),
-      text: inputText,
+      id: messageId,
+      text: messageText,
       sender: 'user',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    const messageText = inputText;
     setInputText('');
     setLoading(true);
 
+    // Add message to local state immediately for instant feedback
+    setMessages(prev => [...prev, userMessage]);
+    
+    // Track this message content with timestamp for deduplication
+    setRecentlySentMessages(prev => {
+      const newMap = new Map(prev);
+      newMap.set(messageText, Date.now());
+      // Clean up old entries (older than 10 seconds)
+      const now = Date.now();
+      for (const [content, timestamp] of newMap.entries()) {
+        if (now - timestamp > 10000) {
+          newMap.delete(content);
+        }
+      }
+      return newMap;
+    });
+
     try {
-      // Send message to teacher - this just saves it, no immediate response expected
+      // Send message to server
       console.log('[Chat] Sending message:', messageText, 'to thread:', thread_id);
       await ApiService.sendChatMessage(messageText, thread_id);
-      console.log('[Chat] Message sent to teacher successfully');
-      
-      // Refresh chat history to show the sent message
-      setTimeout(async () => {
-        console.log('[Chat] Refreshing chat history after send...');
-        const chatHistory = await ApiService.getChatHistory(thread_id);
-        console.log('[Chat] Refreshed history after send:', chatHistory.length);
-        setMessages(chatHistory);
-      }, 500);
-      
+      console.log('[Chat] Message sent successfully');
+
+      // The WebSocket will receive this message back with the backend ID
+      // It will update our local message's ID to match the backend
+
     } catch (err) {
       console.error('Error sending message:', err);
       Alert.alert('Error', 'Failed to send message. Please try again.');
-      
+
+      // Remove the message from local state if sending failed
+      setMessages(prev => prev.filter(msg => msg.id !== messageId));
+
+      // Remove from recently sent tracking
+      setRecentlySentMessages(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(messageText);
+        return newMap;
+      });
+
       // Restore the input text if sending failed
       setInputText(messageText);
     } finally {
@@ -260,7 +328,7 @@ export default function ChatScreen() {
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
+        keyboardVerticalOffset={0}
       >
         <FlatList
           ref={flatListRef}
@@ -268,6 +336,7 @@ export default function ChatScreen() {
           renderItem={renderMessage}
           keyExtractor={item => item.id}
           style={styles.messageList}
+          contentContainerStyle={styles.messageListContent}
         />
         <View style={styles.inputContainer}>
           <TextInput
@@ -352,7 +421,10 @@ const styles = StyleSheet.create({
   },
   messageList: {
     flex: 1,
+  },
+  messageListContent: {
     paddingHorizontal: 10,
+    paddingBottom: 10,
   },
   messageContainer: {
     marginVertical: 5,
@@ -394,8 +466,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 15,
-    paddingVertical: 15,
-    paddingBottom: 25,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 12,
     borderTopWidth: 1,
     borderTopColor: '#EEE',
     backgroundColor: 'white',

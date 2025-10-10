@@ -4,8 +4,8 @@ from typing import List
 import uuid
 
 from app.database import get_db
-from app.models import User, UserNote, Course, Module, TeacherAssignment
-from app.schemas import UserResponse, NoteBase, NoteResponse, ShareCourseResponse
+from app.models import User, UserNote, Course, Module, TeacherAssignment, Role
+from app.schemas import UserResponse, UserProfileUpdate, NoteBase, NoteResponse, ShareCourseResponse
 from app.utils.auth import get_current_user
 from app.rbac import require_permission
 
@@ -32,7 +32,14 @@ async def get_user_profile(
         name=user.name,
         email=user.email,
         phone=user.phone,
+        age=user.age,
         avatar_url=user.avatar_url,
+        church_admin_name=user.church_admin_name,
+        home_church=user.home_church,
+        country=user.country,
+        city=user.city,
+        postal_code=user.postal_code,
+        church_admin_cell_phone=user.church_admin_cell_phone,
         is_verified=user.is_verified,
         onboarding_completed=user.onboarding_completed,
         created_at=user.created_at,
@@ -46,7 +53,7 @@ async def get_user_profile(
 
 @router.put("/profile", response_model=UserResponse)
 async def update_user_profile(
-    update_data: dict,  # Using dict for flexibility in fields to update
+    update_data: UserProfileUpdate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -57,15 +64,41 @@ async def update_user_profile(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    allowed_fields = ["name", "phone", "avatar_url"]
+    # Update allowed fields
+    update_dict = update_data.dict(exclude_unset=True)
+    allowed_fields = [
+        "name", "email", "phone", "age", "avatar_url",
+        "church_admin_name", "home_church", "country", "city", "postal_code", 
+        "church_admin_cell_phone"
+    ]
     
-    for field, value in update_data.items():
+    for field, value in update_dict.items():
         if field in allowed_fields and hasattr(user, field):
             setattr(user, field, value)
     
     db.commit()
     db.refresh(user)
-    return user
+    
+    # Return updated user response
+    return UserResponse(
+        id=str(user.id),
+        name=user.name,
+        email=user.email,
+        phone=user.phone,
+        age=user.age,
+        avatar_url=user.avatar_url,
+        church_admin_name=user.church_admin_name,
+        home_church=user.home_church,
+        country=user.country,
+        city=user.city,
+        postal_code=user.postal_code,
+        church_admin_cell_phone=user.church_admin_cell_phone,
+        is_verified=user.is_verified,
+        onboarding_completed=user.onboarding_completed,
+        created_at=user.created_at,
+        last_login=user.last_login,
+        roles=[role.name for role in user.roles] if user.roles else []
+    )
 
 @router.get("/notes", response_model=List[NoteResponse])
 async def get_user_notes(
@@ -214,6 +247,66 @@ async def delete_note(
     db.commit()
     
     return {"message": "Note deleted successfully"}
+
+@router.delete("/account")
+async def delete_account(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete user account (soft delete by deactivating)"""
+    user_id = current_user["id"]
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if user is a teacher
+    user_roles = [role.name for role in user.roles] if user.roles else []
+    is_teacher = "teacher" in user_roles or "admin" in user_roles
+    
+    if is_teacher:
+        # If teacher/admin is deleting their account, reassign their students to a default admin
+        # First, find the primary admin user (the one with admin role)
+        admin_role = db.query(Role).filter(Role.name == "admin").first()
+        if admin_role:
+            # Get the first active admin user (preferably the system admin)
+            default_admin = db.query(User).join(User.roles).filter(
+                Role.name == "admin",
+                User.is_active == True,
+                User.id != user_id  # Don't assign to themselves
+            ).first()
+            
+            if default_admin:
+                # Find all active teacher assignments where this user is the teacher
+                teacher_assignments = db.query(TeacherAssignment).filter(
+                    TeacherAssignment.teacher_id == user_id,
+                    TeacherAssignment.active == True
+                ).all()
+                
+                # Reassign all students to the default admin
+                reassigned_count = 0
+                for assignment in teacher_assignments:
+                    assignment.teacher_id = default_admin.id
+                    assignment.assigned_by = default_admin.id
+                    reassigned_count += 1
+                
+                if reassigned_count > 0:
+                    print(f"Reassigned {reassigned_count} students from teacher {user.email} to admin {default_admin.email}")
+                    db.commit()
+            else:
+                # No other admin found, just deactivate assignments
+                db.query(TeacherAssignment).filter(
+                    TeacherAssignment.teacher_id == user_id,
+                    TeacherAssignment.active == True
+                ).update({"active": False})
+                db.commit()
+    
+    # Soft delete: deactivate user instead of deleting to preserve data integrity
+    user.is_active = False
+    user.email = f"deleted_{user_id}_{user.email}"  # Prevent email conflicts if user wants to re-register
+    db.commit()
+    
+    return {"message": "Account deleted successfully"}
 
 @router.post("/share/course/{course_id}", response_model=ShareCourseResponse)
 async def share_course(

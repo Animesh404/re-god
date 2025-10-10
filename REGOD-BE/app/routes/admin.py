@@ -504,6 +504,59 @@ async def remove_role_from_user(
     
     return {"message": f"Role '{role.name}' removed from user '{user.name}'"}
 
+@router.delete("/users/{user_id}")
+@require_permission("admin:users:manage")
+async def delete_user_account(
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a user account (admin only) - soft delete with student reassignment for teachers"""
+    # Prevent admin from deleting themselves
+    if str(current_user["id"]) == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account"
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if user is a teacher
+    user_roles = [role.name for role in user.roles] if user.roles else []
+    is_teacher = "teacher" in user_roles or "admin" in user_roles
+    
+    if is_teacher:
+        # If teacher/admin is being deleted, reassign their students to the current admin
+        # Find all active teacher assignments where this user is the teacher
+        teacher_assignments = db.query(TeacherAssignment).filter(
+            TeacherAssignment.teacher_id == user_id,
+            TeacherAssignment.active == True
+        ).all()
+        
+        # Reassign all students to the current admin (the one performing the deletion)
+        reassigned_count = 0
+        for assignment in teacher_assignments:
+            assignment.teacher_id = current_user["id"]
+            assignment.assigned_by = current_user["id"]
+            reassigned_count += 1
+        
+        if reassigned_count > 0:
+            print(f"Admin {current_user['email']} reassigned {reassigned_count} students from deleted teacher {user.email}")
+            db.commit()
+    
+    # Soft delete: deactivate user instead of deleting to preserve data integrity
+    user.is_active = False
+    user.email = f"deleted_{user_id}_{user.email}"  # Prevent email conflicts
+    db.commit()
+    
+    return {
+        "message": "Account deleted successfully",
+        "user_id": user_id,
+        "reassigned_students": reassigned_count if is_teacher else 0
+    }
+
 @router.get("/teacher-assignments", response_model=List[TeacherAssignmentResponse])
 @require_permission("admin:users:manage")
 async def get_all_teacher_assignments(
@@ -706,3 +759,192 @@ async def get_teachers_directory(
         }
         for teacher in teachers
     ]
+
+@router.get("/students")
+@require_role(["admin", "teacher"])
+async def get_students_directory(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get students - admins see all students, teachers see only their assigned students"""
+    from app.models import UserCourseProgress, TeacherAssignment
+    
+    # Check if current user is admin
+    current_user_roles = current_user.get("roles", [])
+    is_admin = "admin" in current_user_roles or current_user.get("role") == "admin"
+    
+    if is_admin:
+        # Admin sees all students
+        # Get all users who don't have admin or teacher roles (i.e., students)
+        # First get teacher and admin role IDs
+        teacher_role = db.query(Role).filter(Role.name == "teacher").first()
+        admin_role = db.query(Role).filter(Role.name == "admin").first()
+        
+        role_ids_to_exclude = []
+        if teacher_role:
+            role_ids_to_exclude.append(teacher_role.id)
+        if admin_role:
+            role_ids_to_exclude.append(admin_role.id)
+        
+        # Get all users who don't have these roles
+        if role_ids_to_exclude:
+            students = db.query(User).filter(
+                ~User.id.in_(
+                    db.query(user_roles.c.user_id).filter(
+                        user_roles.c.role_id.in_(role_ids_to_exclude)
+                    )
+                ),
+                User.is_active == True
+            ).all()
+        else:
+            students = db.query(User).filter(User.is_active == True).all()
+    else:
+        # Teacher sees only their assigned students
+        assignments = db.query(TeacherAssignment).filter(
+            TeacherAssignment.teacher_id == current_user["id"],
+            TeacherAssignment.active == True
+        ).all()
+        
+        student_ids = [assignment.student_id for assignment in assignments]
+        students = db.query(User).filter(User.id.in_(student_ids)).all()
+    
+    result = []
+    for student in students:
+        # Get course progress count
+        course_count = db.query(UserCourseProgress).filter(
+            UserCourseProgress.user_id == student.id
+        ).count()
+        
+        result.append({
+            "id": str(student.id),
+            "first_name": student.name.split()[0] if student.name else "",
+            "last_name": " ".join(student.name.split()[1:]) if student.name and len(student.name.split()) > 1 else "",
+            "name": student.name,
+            "email": student.email,
+            "phone": student.phone,
+            "avatar_url": student.avatar_url,
+            "created_at": student.created_at.isoformat() if student.created_at else None,
+            "is_active": student.is_active,
+            "enrolled_courses": course_count
+        })
+    
+    return result
+
+@router.get("/students/{student_id}/analytics")
+@require_role(["admin", "teacher"])
+async def get_student_analytics(
+    student_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get detailed analytics for a specific student - admins can access any student, teachers only their assigned students"""
+    from app.models import UserCourseProgress, UserModuleProgress, QuizResponse, TeacherAssignment
+    from sqlalchemy import func
+    import uuid
+    
+    # Get student
+    student = db.query(User).filter(User.id == uuid.UUID(student_id)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    # Check if current user is admin
+    current_user_roles = current_user.get("roles", [])
+    is_admin = "admin" in current_user_roles or current_user.get("role") == "admin"
+    
+    # If not admin, check if teacher has access to this student
+    if not is_admin:
+        # Check if this teacher is assigned to this student
+        assignment = db.query(TeacherAssignment).filter(
+            TeacherAssignment.teacher_id == current_user["id"],
+            TeacherAssignment.student_id == student_id,
+            TeacherAssignment.active == True
+        ).first()
+        
+        if not assignment:
+            raise HTTPException(status_code=403, detail="You don't have permission to view this student's analytics")
+    
+    # Get course progress
+    course_progress = db.query(UserCourseProgress).filter(
+        UserCourseProgress.user_id == student.id
+    ).all()
+    
+    # Calculate total courses enrolled and completed
+    total_courses = len(course_progress)
+    completed_courses = sum(1 for cp in course_progress if cp.progress_percentage >= 100)
+    total_course_progress = sum(cp.progress_percentage for cp in course_progress) / total_courses if total_courses > 0 else 0
+    
+    # Get lesson/module progress
+    module_progress = db.query(UserModuleProgress).filter(
+        UserModuleProgress.user_id == student.id
+    ).all()
+    
+    total_lessons = len(module_progress)
+    completed_lessons = sum(1 for mp in module_progress if mp.status == "completed")
+    total_lesson_progress = (completed_lessons / total_lessons * 100) if total_lessons > 0 else 0
+    
+    # Get quiz responses
+    quiz_responses = db.query(QuizResponse).filter(
+        QuizResponse.user_id == student.id
+    ).all()
+    
+    total_quizzes = len(set((qr.course_id, qr.module_id) for qr in quiz_responses))
+    
+    # Get total time spent (approximate based on sessions)
+    # For now, we'll estimate based on last_visited_at timestamps
+    time_spent_hours = 0.0
+    if course_progress:
+        # Calculate approximate time based on activity
+        for cp in course_progress:
+            if cp.started_at and cp.last_visited_at:
+                delta = cp.last_visited_at - cp.started_at
+                time_spent_hours += delta.total_seconds() / 3600
+    
+    # Limit to reasonable value
+    time_spent_hours = min(time_spent_hours, 1000)
+    
+    # Calculate average time per day (estimate)
+    if student.created_at:
+        from datetime import datetime, timezone as tz
+        days_active = max(1, (datetime.now(tz.utc) - student.created_at).days)
+        avg_time_per_day = time_spent_hours / days_active
+    else:
+        avg_time_per_day = 0
+    
+    # Get time spent data for chart (last 30 days)
+    from datetime import datetime, timedelta, timezone as tz
+    time_series = []
+    now = datetime.now(tz.utc)
+    
+    for i in range(9):  # Last 9 data points
+        date = now - timedelta(days=(8 - i) * 3)
+        # Simulate activity data (random for now, would need real tracking)
+        import random
+        hours = random.uniform(20, 110) if course_progress else 0
+        time_series.append({
+            "date": date.strftime("%d/%m"),
+            "hours": round(hours, 1)
+        })
+    
+    return {
+        "student": {
+            "id": str(student.id),
+            "name": student.name,
+            "email": student.email,
+            "phone": student.phone,
+            "avatar_url": student.avatar_url,
+            "created_at": student.created_at.isoformat() if student.created_at else None
+        },
+        "stats": {
+            "time_spent_hours": round(time_spent_hours, 1),
+            "avg_time_per_day_hours": round(avg_time_per_day, 1),
+            "finished_courses": completed_courses,
+            "total_courses": total_courses,
+            "course_progress_percentage": round(total_course_progress, 1),
+            "completed_lessons": completed_lessons,
+            "total_lessons": total_lessons,
+            "lesson_progress_percentage": round(total_lesson_progress, 1),
+            "completed_quizzes": total_quizzes,
+            "quiz_progress_percentage": round((total_quizzes / max(1, total_courses * 3)) * 100, 1)  # Assume ~3 quizzes per course
+        },
+        "time_series": time_series
+    }

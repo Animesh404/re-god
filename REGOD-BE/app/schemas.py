@@ -7,7 +7,15 @@ class UserBase(BaseModel):
     email: Optional[str] = None
     name: str
     phone: Optional[str] = None
+    age: Optional[int] = None
     avatar_url: Optional[str] = None
+    # Church-related fields
+    church_admin_name: Optional[str] = None
+    home_church: Optional[str] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
+    postal_code: Optional[str] = None
+    church_admin_cell_phone: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -26,6 +34,19 @@ class UserResponse(UserBase):
     
     class Config:
         from_attributes = True
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    age: Optional[int] = None
+    avatar_url: Optional[str] = None
+    church_admin_name: Optional[str] = None
+    home_church: Optional[str] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
+    postal_code: Optional[str] = None
+    church_admin_cell_phone: Optional[str] = None
 
 class Token(BaseModel):
     access_token: str
